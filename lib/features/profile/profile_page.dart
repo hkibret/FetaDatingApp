@@ -16,7 +16,22 @@ class ProfilePage extends ConsumerWidget {
       child: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          Text('My Profile', style: Theme.of(context).textTheme.headlineSmall),
+          // ✅ Header + Edit button
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'My Profile',
+                  style: Theme.of(context).textTheme.headlineSmall,
+                ),
+              ),
+              IconButton(
+                tooltip: 'Edit profile',
+                icon: const Icon(Icons.edit),
+                onPressed: () => context.push('/profile/edit'),
+              ),
+            ],
+          ),
           const SizedBox(height: 16),
 
           // User info card
@@ -91,7 +106,6 @@ class ProfilePage extends ConsumerWidget {
             label: const Text('Logout'),
             onPressed: () async {
               await ref.read(authControllerProvider.notifier).logout();
-              // Router redirect will send them to /login once auth state updates
               if (context.mounted) context.go('/login');
             },
           ),
