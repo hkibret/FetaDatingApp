@@ -54,15 +54,48 @@ class _RegisterPageState extends ConsumerState<RegisterPage> {
     });
 
     try {
-      await ref
+      // ✅ IMPORTANT: register() should call Supabase auth signUp only.
+      // It should NOT insert into profiles manually (your trigger does that).
+      final result = await ref
           .read(authControllerProvider.notifier)
           .register(email: email, password: password, confirmPassword: confirm);
 
       if (!mounted) return;
+
+      // ✅ Handle Supabase behavior:
+      // If email confirmation is enabled, signUp succeeds but session is null.
+      final session = result.session;
+      final user = result.user;
+
+      if (user != null && session == null) {
+        // Account created, needs email confirmation
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Account created! Please check your email to confirm, then log in.',
+            ),
+          ),
+        );
+        context.go('/login');
+        return;
+      }
+
+      // Logged in immediately
       context.go('/discover');
     } catch (e) {
+      // Clean message
       final msg = e.toString().replaceFirst('Exception: ', '');
-      setState(() => _error = msg);
+
+      // If your backend still throws "Database error saving new user"
+      // but you see the profile row created, this is likely a misleading
+      // post-signup error. We'll show a nicer message.
+      final friendly =
+          msg.contains('Database error saving new user') ||
+              msg.contains('unexpected_failure')
+          ? 'Account may have been created. Try logging in. If email confirmation is enabled, confirm your email first.'
+          : msg;
+
+      if (mounted) setState(() => _error = friendly);
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -91,7 +124,6 @@ class _RegisterPageState extends ConsumerState<RegisterPage> {
                     onSubmitted: (_) => FocusScope.of(context).nextFocus(),
                   ),
                   const SizedBox(height: 12),
-
                   TextField(
                     controller: _password,
                     obscureText: true,
@@ -102,7 +134,6 @@ class _RegisterPageState extends ConsumerState<RegisterPage> {
                     onSubmitted: (_) => FocusScope.of(context).nextFocus(),
                   ),
                   const SizedBox(height: 12),
-
                   TextField(
                     controller: _confirm,
                     obscureText: true,
@@ -114,14 +145,11 @@ class _RegisterPageState extends ConsumerState<RegisterPage> {
                     enabled: !_loading,
                     onSubmitted: (_) => _submit(),
                   ),
-
                   const SizedBox(height: 16),
-
                   if (_error != null) ...[
                     Text(_error!, style: const TextStyle(color: Colors.red)),
                     const SizedBox(height: 12),
                   ],
-
                   SizedBox(
                     width: double.infinity,
                     child: FilledButton(
@@ -129,9 +157,7 @@ class _RegisterPageState extends ConsumerState<RegisterPage> {
                       child: Text(_loading ? 'Creating...' : 'Create account'),
                     ),
                   ),
-
                   const SizedBox(height: 12),
-
                   TextButton(
                     onPressed: _loading ? null : () => context.go('/login'),
                     child: const Text('Back to login'),

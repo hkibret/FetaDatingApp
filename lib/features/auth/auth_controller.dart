@@ -44,12 +44,35 @@ class AuthController extends Notifier<AuthState> {
 
   @override
   AuthState build() {
+    // Keep state synced with Supabase session changes.
+    _sb.auth.onAuthStateChange.listen((data) async {
+      final session = data.session;
+      final user = session?.user;
+
+      if (session != null && user != null) {
+        await HiveService.saveAuth(
+          token: session.accessToken,
+          email: user.email ?? '',
+          userId: user.id,
+        );
+        state = AuthState(
+          isLoggedIn: true,
+          token: session.accessToken,
+          email: user.email,
+          userId: user.id,
+        );
+      } else {
+        await HiveService.clearAuth();
+        state = const AuthState.loggedOut();
+      }
+    });
+
     // Hive boxes are opened in main() before runApp() so reads are sync.
     final token = HiveService.getToken();
     final email = HiveService.getEmail();
     final userId = HiveService.authBox.get('userId') as String?;
 
-    // If Supabase already has a session, prefer it.
+    // Prefer Supabase current session if exists.
     final session = _sb.auth.currentSession;
     final user = _sb.auth.currentUser;
 
@@ -69,7 +92,7 @@ class AuthController extends Notifier<AuthState> {
       );
     }
 
-    // Fallback: your previous Hive-based restore
+    // Fallback: Hive-based restore (your app state)
     if (token != null && token.isNotEmpty) {
       return AuthState(
         isLoggedIn: true,
@@ -83,10 +106,10 @@ class AuthController extends Notifier<AuthState> {
   }
 
   /// Login with Supabase:
-  /// - Validates inputs
-  /// - Signs in via Supabase Auth
-  /// - Saves access token/email/userId in Hive
-  Future<void> login({required String email, required String password}) async {
+  Future<AuthResponse> login({
+    required String email,
+    required String password,
+  }) async {
     final e = email.trim();
     if (e.isEmpty || password.isEmpty) {
       throw Exception('Email and password are required.');
@@ -117,8 +140,9 @@ class AuthController extends Notifier<AuthState> {
         email: user.email ?? e,
         userId: user.id,
       );
+
+      return res;
     } on AuthException catch (ex) {
-      // Supabase gives clean messages here
       throw Exception(ex.message);
     } catch (ex) {
       throw Exception(ex.toString().replaceFirst('Exception: ', ''));
@@ -126,18 +150,21 @@ class AuthController extends Notifier<AuthState> {
   }
 
   /// Register with Supabase:
-  /// - Validates inputs
-  /// - Signs up via Supabase Auth
-  /// - Saves session if returned (if email confirmations are OFF)
   ///
-  /// If email confirmations are ON, Supabase may return user but no session.
-  /// In that case, we show a friendly message and keep user logged out until they verify.
-  Future<void> register({
+  /// ✅ IMPORTANT:
+  /// - Do NOT insert into public.profiles here.
+  ///   Your database trigger handle_new_user() creates the profile row.
+  ///
+  /// Behavior:
+  /// - If email confirmation is ON, Supabase returns user but session == null.
+  ///   That is SUCCESS. We keep user logged out and let UI show "check email".
+  Future<AuthResponse> register({
     required String email,
     required String password,
     required String confirmPassword,
   }) async {
     final e = email.trim();
+
     if (e.isEmpty || password.isEmpty || confirmPassword.isEmpty) {
       throw Exception('Email and passwords are required.');
     }
@@ -149,25 +176,29 @@ class AuthController extends Notifier<AuthState> {
     }
 
     try {
-      final res = await _sb.auth.signUp(email: e, password: password);
+      final res = await _sb.auth.signUp(
+        email: e,
+        password: password,
+        // optional metadata
+        data: const {'name': 'New User'},
+      );
 
       final session = res.session;
       final user = res.user;
 
-      // If email confirmations are enabled, session can be null
       if (user == null) {
         throw Exception('Registration failed. No user returned.');
       }
 
+      // ✅ Email confirmation ON: session is null but user is created -> success
       if (session == null) {
-        // User created but needs email verification
+        // Ensure local auth is cleared (user must confirm then login)
         await HiveService.clearAuth();
         state = const AuthState.loggedOut();
-        throw Exception(
-          'Check your email to confirm your account, then log in.',
-        );
+        return res;
       }
 
+      // ✅ Email confirmation OFF: session exists -> logged in immediately
       await HiveService.saveAuth(
         token: session.accessToken,
         email: user.email ?? e,
@@ -180,6 +211,8 @@ class AuthController extends Notifier<AuthState> {
         email: user.email ?? e,
         userId: user.id,
       );
+
+      return res;
     } on AuthException catch (ex) {
       throw Exception(ex.message);
     } catch (ex) {
@@ -188,8 +221,6 @@ class AuthController extends Notifier<AuthState> {
   }
 
   /// Logout:
-  /// - Supabase signOut
-  /// - Clears Hive auth
   Future<void> logout() async {
     try {
       await _sb.auth.signOut();
@@ -198,11 +229,6 @@ class AuthController extends Notifier<AuthState> {
     }
 
     await HiveService.clearAuth();
-
-    // Optional: wipe user data on logout
-    // await HiveService.clearMatches();
-    // await HiveService.clearChats();
-
     state = const AuthState.loggedOut();
   }
 }
