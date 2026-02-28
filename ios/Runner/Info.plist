@@ -22,6 +22,20 @@
 	<string>????</string>
 	<key>CFBundleVersion</key>
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
+
+	<!-- Deep link URL scheme for Supabase auth callbacks (e.g., feta://auth-callback) -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>feta_dating</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>feta</string>
+			</array>
+		</dict>
+	</array>
+
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>UILaunchStoryboardName</key>
