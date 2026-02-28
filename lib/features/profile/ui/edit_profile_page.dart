@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
@@ -24,7 +25,9 @@ class _EditProfilePageState extends ConsumerState<EditProfilePage> {
   String? _pickedContentType;
 
   bool _saving = false;
-  bool _didPrefill = false;
+
+  // ✅ safer: track which profile we prefilling for
+  String? _prefilledForUserId;
 
   @override
   void dispose() {
@@ -35,9 +38,9 @@ class _EditProfilePageState extends ConsumerState<EditProfilePage> {
   }
 
   void _prefill(Profile p) {
-    _name.text = p.name ?? '';
-    _age.text = p.age?.toString() ?? '';
-    _bio.text = p.bio ?? '';
+    _name.text = (p.name ?? '');
+    _age.text = (p.age?.toString() ?? '');
+    _bio.text = (p.bio ?? '');
   }
 
   Future<void> _pickImage() async {
@@ -50,14 +53,14 @@ class _EditProfilePageState extends ConsumerState<EditProfilePage> {
 
     final bytes = await x.readAsBytes();
 
-    final ext = (x.name.split('.').length > 1)
-        ? x.name.split('.').last.toLowerCase()
-        : 'jpg';
+    final parts = x.name.split('.');
+    final ext = (parts.length > 1) ? parts.last.toLowerCase() : 'jpg';
 
     String contentType = 'image/jpeg';
     if (ext == 'png') contentType = 'image/png';
     if (ext == 'webp') contentType = 'image/webp';
 
+    if (!mounted) return;
     setState(() {
       _pickedBytes = bytes;
       _pickedExt = ext;
@@ -66,6 +69,8 @@ class _EditProfilePageState extends ConsumerState<EditProfilePage> {
   }
 
   Future<void> _save(Profile current) async {
+    FocusScope.of(context).unfocus();
+
     setState(() => _saving = true);
     try {
       final repo = ref.read(profileRepoProvider);
@@ -83,7 +88,6 @@ class _EditProfilePageState extends ConsumerState<EditProfilePage> {
 
       final parsedAge = int.tryParse(_age.text.trim());
 
-      // ✅ Persist avatarUrl along with name/age/bio
       await repo.upsertProfile(
         name: _name.text.trim().isEmpty ? null : _name.text.trim(),
         age: parsedAge,
@@ -91,10 +95,11 @@ class _EditProfilePageState extends ConsumerState<EditProfilePage> {
         avatarUrl: avatarUrl,
       );
 
-      // refresh profile
+      // ✅ refresh profile
       ref.invalidate(myProfileProvider);
 
-      if (mounted) Navigator.pop(context);
+      if (!mounted) return;
+      Navigator.pop(context);
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(
@@ -110,24 +115,99 @@ class _EditProfilePageState extends ConsumerState<EditProfilePage> {
     final profileAsync = ref.watch(myProfileProvider);
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Edit Profile')),
+      appBar: AppBar(
+        title: const Text('Edit Profile'),
+        actions: [
+          TextButton(
+            onPressed: _saving
+                ? null
+                : () async {
+                    final p = profileAsync.maybeWhen(
+                      data: (p) => p,
+                      orElse: () => null,
+                    );
+                    if (p == null) return;
+                    await _save(p);
+                  },
+            child: Text(_saving ? 'Saving…' : 'Save'),
+          ),
+        ],
+      ),
       body: profileAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => Center(child: Text('Error: $e')),
+        error: (e, st) => Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Could not load your profile.',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 8),
+              Text('$e', style: const TextStyle(color: Colors.red)),
+              const SizedBox(height: 12),
+              ElevatedButton(
+                onPressed: () => ref.invalidate(myProfileProvider),
+                child: const Text('Retry'),
+              ),
+            ],
+          ),
+        ),
         data: (p) {
-          if (p == null) return const Center(child: Text('No profile found'));
+          if (p == null) {
+            return Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('No profile found.'),
+                  const SizedBox(height: 12),
+                  ElevatedButton(
+                    onPressed: () => ref.invalidate(myProfileProvider),
+                    child: const Text('Reload'),
+                  ),
+                ],
+              ),
+            );
+          }
 
-          // ✅ Prefill ONCE (no addPostFrameCallback spam)
-          if (!_didPrefill) {
-            _didPrefill = true;
+          // ✅ Prefill ONCE per user id (prevents stale prefill + prevents rebuild spam)
+          final currentId = p.id; // make sure Profile has id
+          if (_prefilledForUserId != currentId) {
+            _prefilledForUserId = currentId;
             _prefill(p);
           }
 
-          ImageProvider<Object>? avatarProvider;
+          Widget avatar;
           if (_pickedBytes != null) {
-            avatarProvider = MemoryImage(_pickedBytes!);
+            avatar = CircleAvatar(
+              radius: 44,
+              backgroundImage: MemoryImage(_pickedBytes!),
+            );
           } else if (p.avatarUrl != null && p.avatarUrl!.isNotEmpty) {
-            avatarProvider = NetworkImage(p.avatarUrl!);
+            // Optional: cache-bust on web if avatar changes often
+            final url = kIsWeb
+                ? '${p.avatarUrl!}?t=${DateTime.now().millisecondsSinceEpoch}'
+                : p.avatarUrl!;
+            avatar = CircleAvatar(
+              radius: 44,
+              backgroundColor: Theme.of(context).colorScheme.surfaceVariant,
+              child: ClipOval(
+                child: Image.network(
+                  url,
+                  width: 88,
+                  height: 88,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) =>
+                      const Icon(Icons.person, size: 44),
+                ),
+              ),
+            );
+          } else {
+            avatar = const CircleAvatar(
+              radius: 44,
+              child: Icon(Icons.person, size: 44),
+            );
           }
 
           return ListView(
@@ -136,13 +216,7 @@ class _EditProfilePageState extends ConsumerState<EditProfilePage> {
               Center(
                 child: Column(
                   children: [
-                    CircleAvatar(
-                      radius: 44,
-                      backgroundImage: avatarProvider,
-                      child: (avatarProvider == null)
-                          ? const Icon(Icons.person, size: 44)
-                          : null,
-                    ),
+                    avatar,
                     TextButton.icon(
                       onPressed: _saving ? null : _pickImage,
                       icon: const Icon(Icons.photo),
