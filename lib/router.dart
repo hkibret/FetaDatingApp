@@ -27,6 +27,11 @@ import 'features/profile/ui/edit_profile_page.dart';
 
 import 'features/onboarding/onboarding_page.dart';
 
+// ✅ Billing (Stripe upgrade flow)
+import 'features/billing/upgrade_page.dart';
+import 'features/billing/upgrade_success_page.dart';
+import 'features/billing/upgrade_cancel_page.dart';
+
 final appRouterProvider = Provider<GoRouter>((ref) {
   final refresh = ref.watch(goRouterRefreshProvider);
 
@@ -55,16 +60,29 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       final goingToForgot = isRoute(state, '/forgot-password');
       final goingToOnboarding = isRoute(state, '/onboarding');
 
+      // ✅ Billing routes (Stripe redirect pages)
+      final goingToUpgrade = isRoute(state, '/upgrade');
+      final goingToUpgradeSuccess = isRoute(state, '/upgrade/success');
+      final goingToUpgradeCancel = isRoute(state, '/upgrade/cancel');
+
       // 🚨 Never block auth callback (Supabase PKCE needs this route)
       if (goingToAuthCallback) return null;
 
       // 🚨 Always allow reset-password page (recovery flow)
       if (goingToReset) return null;
 
+      // ✅ Always allow Stripe success/cancel pages (even if logged out)
+      // This prevents redirect loops if the user returns from Stripe and session isn't loaded yet.
+      if (goingToUpgradeSuccess || goingToUpgradeCancel) return null;
+
       // --- LOGGED OUT ---
       if (!loggedIn) {
         // ✅ Block onboarding if logged out (prevents "Not logged in" on submit)
         if (goingToOnboarding) return '/login';
+
+        // ✅ Allow Upgrade page if logged out? (optional)
+        // Typically you want login first before checkout so we can attach user_id in metadata.
+        if (goingToUpgrade) return '/login';
 
         final allowed =
             goingToWelcome || goingToLogin || goingToRegister || goingToForgot;
@@ -79,6 +97,12 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         // Allow forgot/reset pages even if logged in (safe)
         if (goingToForgot || goingToReset || goingToAuthCallback) return null;
 
+        // ✅ Allow Stripe success/cancel even during onboarding
+        if (goingToUpgradeSuccess || goingToUpgradeCancel) return null;
+
+        // Optional: allow Upgrade page during onboarding (usually fine)
+        if (goingToUpgrade) return null;
+
         if (!goingToOnboarding) return '/onboarding';
         return null;
       }
@@ -86,8 +110,9 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       // 2) Onboarding done: keep them out of onboarding/auth landing
       if (onboardingDone) {
         if (goingToOnboarding) return '/discover';
-        if (goingToWelcome || goingToLogin || goingToRegister)
+        if (goingToWelcome || goingToLogin || goingToRegister) {
           return '/discover';
+        }
       }
 
       return null;
@@ -122,6 +147,20 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/reset-password',
         builder: (context, state) => const ResetPasswordPage(),
+      ),
+
+      // ✅ Billing (Stripe)
+      GoRoute(
+        path: '/upgrade',
+        builder: (context, state) => const UpgradePage(),
+      ),
+      GoRoute(
+        path: '/upgrade/success',
+        builder: (context, state) => const UpgradeSuccessPage(),
+      ),
+      GoRoute(
+        path: '/upgrade/cancel',
+        builder: (context, state) => const UpgradeCancelPage(),
       ),
 
       // Onboarding
