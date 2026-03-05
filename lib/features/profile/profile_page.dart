@@ -55,8 +55,9 @@ class ProfilePage extends ConsumerWidget {
                       children: [
                         Text(
                           'Signed in as',
-                          style: Theme.of(context).textTheme.bodyMedium
-                              ?.copyWith(color: Colors.grey.shade700),
+                          style: Theme.of(
+                            context,
+                          ).textTheme.bodyMedium?.copyWith(color: Colors.grey),
                         ),
                         const SizedBox(height: 4),
                         Text(
@@ -69,8 +70,9 @@ class ProfilePage extends ConsumerWidget {
                           const SizedBox(height: 4),
                           Text(
                             'UID: ${auth.userId}',
-                            style: Theme.of(context).textTheme.bodySmall
-                                ?.copyWith(color: Colors.grey.shade700),
+                            style: Theme.of(
+                              context,
+                            ).textTheme.bodySmall?.copyWith(color: Colors.grey),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                           ),
@@ -97,6 +99,19 @@ class ProfilePage extends ConsumerWidget {
             leading: const Icon(Icons.chat_bubble_outline),
             title: const Text('Messages'),
             onTap: () => context.go('/messages'),
+          ),
+
+          const SizedBox(height: 24),
+
+          // ✅ Billing section (AfroIntroductions-style: always visible)
+          Text('Membership', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 12),
+
+          ListTile(
+            leading: const Icon(Icons.credit_card),
+            title: const Text('Billing'),
+            subtitle: const Text('Upgrade or manage your plan'),
+            onTap: () => context.push('/billing'),
           ),
 
           const SizedBox(height: 32),

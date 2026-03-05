@@ -27,8 +27,8 @@ import 'features/profile/ui/edit_profile_page.dart';
 
 import 'features/onboarding/onboarding_page.dart';
 
-// ✅ Billing (Stripe upgrade flow)
-import 'features/billing/upgrade_page.dart';
+// ✅ Billing (Paywall + Stripe redirect pages)
+import 'features/billing/upgrade_paywall_page.dart';
 import 'features/billing/upgrade_success_page.dart';
 import 'features/billing/upgrade_cancel_page.dart';
 
@@ -60,8 +60,9 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       final goingToForgot = isRoute(state, '/forgot-password');
       final goingToOnboarding = isRoute(state, '/onboarding');
 
-      // ✅ Billing routes (Stripe redirect pages)
-      final goingToUpgrade = isRoute(state, '/upgrade');
+      // ✅ Billing routes
+      final goingToUpgrade = isRoute(state, '/upgrade'); // optional alias
+      final goingToBilling = isRoute(state, '/billing'); // main in-app billing
       final goingToUpgradeSuccess = isRoute(state, '/upgrade/success');
       final goingToUpgradeCancel = isRoute(state, '/upgrade/cancel');
 
@@ -71,18 +72,16 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       // 🚨 Always allow reset-password page (recovery flow)
       if (goingToReset) return null;
 
-      // ✅ Always allow Stripe success/cancel pages (even if logged out)
-      // This prevents redirect loops if the user returns from Stripe and session isn't loaded yet.
+      // ✅ Always allow Stripe success/cancel pages (avoid redirect loops)
       if (goingToUpgradeSuccess || goingToUpgradeCancel) return null;
 
       // --- LOGGED OUT ---
       if (!loggedIn) {
-        // ✅ Block onboarding if logged out (prevents "Not logged in" on submit)
+        // Block onboarding if logged out
         if (goingToOnboarding) return '/login';
 
-        // ✅ Allow Upgrade page if logged out? (optional)
-        // Typically you want login first before checkout so we can attach user_id in metadata.
-        if (goingToUpgrade) return '/login';
+        // If user tries billing/upgrade while logged out, send to login
+        if (goingToBilling || goingToUpgrade) return '/login';
 
         final allowed =
             goingToWelcome || goingToLogin || goingToRegister || goingToForgot;
@@ -94,14 +93,13 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       // --- LOGGED IN ---
       // 1) Force onboarding until completed
       if (!onboardingDone) {
-        // Allow forgot/reset pages even if logged in (safe)
         if (goingToForgot || goingToReset || goingToAuthCallback) return null;
 
-        // ✅ Allow Stripe success/cancel even during onboarding
+        // Allow Stripe success/cancel even during onboarding
         if (goingToUpgradeSuccess || goingToUpgradeCancel) return null;
 
-        // Optional: allow Upgrade page during onboarding (usually fine)
-        if (goingToUpgrade) return null;
+        // Optional: allow billing/upgrade during onboarding
+        if (goingToBilling || goingToUpgrade) return null;
 
         if (!goingToOnboarding) return '/onboarding';
         return null;
@@ -119,13 +117,11 @@ final appRouterProvider = Provider<GoRouter>((ref) {
     },
 
     routes: [
-      // ✅ Required for Supabase PKCE (code exchange lands here depending on config)
       GoRoute(
         path: '/auth-callback',
         redirect: (context, state) => '/reset-password',
       ),
 
-      // Welcome (logged-out landing)
       GoRoute(
         path: '/welcome',
         builder: (context, state) => WelcomePage(
@@ -149,11 +145,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         builder: (context, state) => const ResetPasswordPage(),
       ),
 
-      // ✅ Billing (Stripe)
-      GoRoute(
-        path: '/upgrade',
-        builder: (context, state) => const UpgradePage(),
-      ),
+      // Stripe redirect pages
       GoRoute(
         path: '/upgrade/success',
         builder: (context, state) => const UpgradeSuccessPage(),
@@ -161,6 +153,12 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/upgrade/cancel',
         builder: (context, state) => const UpgradeCancelPage(),
+      ),
+
+      // Optional alias route: /upgrade → same UI as /billing (paywall)
+      GoRoute(
+        path: '/upgrade',
+        builder: (context, state) => const UpgradePaywallPage(),
       ),
 
       // Onboarding
@@ -202,6 +200,12 @@ final appRouterProvider = Provider<GoRouter>((ref) {
             path: '/profile/:id',
             builder: (context, state) =>
                 ProfileDetailPage(profileId: state.pathParameters['id']!),
+          ),
+
+          // ✅ AfroIntroductions-style Billing route (Paywall UI)
+          GoRoute(
+            path: '/billing',
+            builder: (context, state) => const UpgradePaywallPage(),
           ),
         ],
       ),

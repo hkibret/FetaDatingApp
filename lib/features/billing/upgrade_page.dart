@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../billing/billing_providers.dart';
-import '../../billing/billing_repo.dart';
-import '../../billing/billing_service.dart';
+import 'billing_providers.dart';
+import 'billing_repo.dart';
+import 'billing_service.dart';
 
 class UpgradePage extends ConsumerWidget {
   const UpgradePage({super.key});

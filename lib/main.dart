@@ -1,5 +1,7 @@
+// lib/main.dart
 import 'dart:async';
-import 'package:flutter/foundation.dart' show kIsWeb;
+
+import 'package:flutter/foundation.dart' show kIsWeb, kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -20,20 +22,32 @@ Future<void> main() async {
   const supabaseAnonKey = String.fromEnvironment('SUPABASE_ANON_KEY');
 
   if (supabaseUrl.isEmpty || !supabaseUrl.startsWith('http')) {
-    throw Exception('Missing/invalid SUPABASE_URL. Pass it via --dart-define.');
+    throw Exception(
+      'Missing/invalid SUPABASE_URL. Pass it via --dart-define=SUPABASE_URL=...',
+    );
   }
   if (supabaseAnonKey.isEmpty) {
-    throw Exception('Missing SUPABASE_ANON_KEY. Pass it via --dart-define.');
+    throw Exception(
+      'Missing SUPABASE_ANON_KEY. Pass it via --dart-define=SUPABASE_ANON_KEY=...',
+    );
   }
 
-  // 3) Initialize Supabase (PKCE recommended for web)
+  // 3) Initialize Supabase
+  // NOTE:
+  // - On web, supabase_flutter uses PKCE automatically.
+  // - Do NOT pass FlutterAuthClientOptions(authFlowType: ...) unless your
+  //   supabase_flutter version supports it.
   await Supabase.initialize(
     url: supabaseUrl,
     anonKey: supabaseAnonKey,
-    authOptions: const FlutterAuthClientOptions(
-      authFlowType: AuthFlowType.pkce,
-    ),
+    debug: kIsWeb, // optional (logs only on web)
   );
+
+  // Helpful debug to confirm you're using the expected project + keys at runtime.
+  if (kDebugMode) {
+    debugPrint('Supabase URL: $supabaseUrl');
+    debugPrint('Supabase anon key length: ${supabaseAnonKey.length}');
+  }
 
   // Helper: navigate to reset page reliably (router may not be ready immediately).
   Future<void> goResetPassword() async {
@@ -49,6 +63,12 @@ Future<void> main() async {
 
   // 4) Listen for password recovery
   Supabase.instance.client.auth.onAuthStateChange.listen((data) {
+    if (kDebugMode) {
+      debugPrint(
+        'Auth event: ${data.event} | session? ${data.session != null}',
+      );
+    }
+
     if (data.event == AuthChangeEvent.passwordRecovery) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         unawaited(goResetPassword());
@@ -65,7 +85,6 @@ Future<void> main() async {
 }
 
 Future<void> _coldStartRecoveryCheck(Future<void> Function() goReset) async {
-  // Only meaningful on web (mobile deep links need separate setup).
   if (!kIsWeb) return;
 
   // Let Supabase parse URL tokens (esp. on cold start).
@@ -79,22 +98,21 @@ Future<void> _coldStartRecoveryCheck(Future<void> Function() goReset) async {
 
   // Detect recovery link params (query or fragment)
   final isRecoveryLink =
-      containsAny(full, [
+      containsAny(full, const [
         'type=recovery',
         'code=',
         'access_token=',
         'refresh_token=',
       ]) ||
-      containsAny(uri.fragment, [
+      containsAny(uri.fragment, const [
         'type=recovery',
         'access_token=',
         'refresh_token=',
       ]) ||
-      containsAny(uri.query, ['type=recovery', 'code=']);
+      containsAny(uri.query, const ['type=recovery', 'code=']);
 
   if (!isRecoveryLink) return;
 
-  // If we got here from a recovery link, route to reset page.
   await goReset();
 }
 

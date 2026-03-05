@@ -1,5 +1,7 @@
+// lib/features/auth/auth_controller.dart
 import 'dart:async'; // StreamSubscription + unawaited
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart' as sb;
 
@@ -54,8 +56,14 @@ class AuthController extends Notifier<AuthState> {
       _authSub = null;
     });
 
-    // Keep state synced with Supabase session changes.
+    // ✅ Keep state synced with Supabase session changes.
     _authSub ??= _sb.auth.onAuthStateChange.listen((sb.AuthState data) async {
+      if (kDebugMode) {
+        debugPrint(
+          'Auth event: ${data.event} | session? ${data.session != null}',
+        );
+      }
+
       final session = data.session;
       final user = session?.user;
 
@@ -115,7 +123,8 @@ class AuthController extends Notifier<AuthState> {
 
     // ✅ CRITICAL FIX:
     // Hive token != Supabase session. Do NOT treat Hive token as logged-in.
-    // This avoids "Not logged in" when calling Supabase later (like onboarding submit).
+    // This avoids false positives where you *think* you're logged in but
+    // Supabase has no session (causes Invalid JWT / Not logged in later).
     if (token != null && token.isNotEmpty) {
       return AuthState(
         isLoggedIn: false, // ✅ important
@@ -185,6 +194,12 @@ class AuthController extends Notifier<AuthState> {
 
       if (session == null || user == null) {
         throw Exception('Login failed. No session returned.');
+      }
+
+      // ✅ Helpful debug for your Stripe/JWT testing
+      if (kDebugMode) {
+        debugPrint('LOGIN access token length: ${session.accessToken.length}');
+        debugPrint('LOGIN refresh token: ${session.refreshToken ?? ""}');
       }
 
       final onboardingDone = await _fetchOnboardingCompletedSafe(user.id);

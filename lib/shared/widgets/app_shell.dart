@@ -12,7 +12,12 @@ class AppShell extends StatelessWidget {
     if (location.startsWith('/messages') || location.startsWith('/chat')) {
       return 2;
     }
-    if (location.startsWith('/profile')) return 3;
+
+    // ✅ Treat billing as part of Profile tab
+    if (location.startsWith('/profile') || location.startsWith('/billing')) {
+      return 3;
+    }
+
     return 0;
   }
 
@@ -32,20 +37,27 @@ class AppShell extends StatelessWidget {
   bool _hideBottomNav(String location) {
     // Hide bottom nav on "detail" / "fullscreen" pages
     if (location.startsWith('/chat/')) return true;
-    // If you want profile detail to be fullscreen too
+
+    // Profile detail pages like /profile/:id (but not /profile itself)
     if (location.startsWith('/profile/') && location != '/profile') return true;
+
+    // Optional: hide on edit profile
+    if (location == '/profile/edit') return true;
+
+    // ✅ Keep nav visible on /billing (so it feels like an in-app settings screen)
     return false;
   }
 
   @override
   Widget build(BuildContext context) {
-    final location = GoRouterState.of(context).uri.toString();
+    // Safer than GoRouterState.of(context) across versions
+    final router = GoRouter.of(context);
+    final location = router.routeInformationProvider.value.uri.toString();
+
     final index = _indexForLocation(location);
     final hideNav = _hideBottomNav(location);
 
     return Scaffold(
-      // Optional: If each page has its own AppBar, remove this AppBar.
-      // appBar: AppBar(title: const Text('Feta')),
       body: child,
       bottomNavigationBar: hideNav
           ? null
