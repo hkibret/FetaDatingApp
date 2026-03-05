@@ -1,7 +1,11 @@
 // lib/router.dart
+import 'dart:async';
+
 import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' as supabase;
 
 import 'router_refresh.dart';
 import 'core/navigation/app_nav_key.dart';
@@ -66,7 +70,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       final goingToUpgradeSuccess = isRoute(state, '/upgrade/success');
       final goingToUpgradeCancel = isRoute(state, '/upgrade/cancel');
 
-      // 🚨 Never block auth callback (Supabase PKCE needs this route)
+      // 🚨 Never block auth callback (Supabase recovery / PKCE needs this route)
       if (goingToAuthCallback) return null;
 
       // 🚨 Always allow reset-password page (recovery flow)
@@ -93,6 +97,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       // --- LOGGED IN ---
       // 1) Force onboarding until completed
       if (!onboardingDone) {
+        // Allow auth recovery flows even if onboarding isn't completed
         if (goingToForgot || goingToReset || goingToAuthCallback) return null;
 
         // Allow Stripe success/cancel even during onboarding
@@ -119,7 +124,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
     routes: [
       GoRoute(
         path: '/auth-callback',
-        redirect: (context, state) => '/reset-password',
+        builder: (context, state) => const AuthCallbackPage(),
       ),
 
       GoRoute(
@@ -198,8 +203,10 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           ),
           GoRoute(
             path: '/profile/:id',
-            builder: (context, state) =>
-                ProfileDetailPage(profileId: state.pathParameters['id']!),
+            builder: (context, state) {
+              final id = state.pathParameters['id']!;
+              return ProfileDetailPage(profileId: id);
+            },
           ),
 
           // ✅ AfroIntroductions-style Billing route (Paywall UI)
@@ -212,3 +219,144 @@ final appRouterProvider = Provider<GoRouter>((ref) {
     ],
   );
 });
+
+/// Handles Supabase email redirects (PKCE / recovery / magic link).
+/// Whitelist in Supabase:
+/// - Site URL: https://feta-dating-app.vercel.app
+/// - Additional Redirect URLs:
+///   https://feta-dating-app.vercel.app/auth-callback
+///   https://feta-dating-app.vercel.app/*
+class AuthCallbackPage extends ConsumerStatefulWidget {
+  const AuthCallbackPage({super.key});
+
+  @override
+  ConsumerState<AuthCallbackPage> createState() => _AuthCallbackPageState();
+}
+
+class _AuthCallbackPageState extends ConsumerState<AuthCallbackPage> {
+  StreamSubscription<supabase.AuthState>? _authSub;
+  bool _navigated = false;
+
+  supabase.SupabaseClient get _sb => supabase.Supabase.instance.client;
+
+  @override
+  void initState() {
+    super.initState();
+
+    _authSub = _sb.auth.onAuthStateChange.listen((data) {
+      final event = data.event;
+
+      if (event == supabase.AuthChangeEvent.passwordRecovery) {
+        _goOnce('/reset-password');
+        return;
+      }
+
+      if (event == supabase.AuthChangeEvent.signedIn ||
+          event == supabase.AuthChangeEvent.tokenRefreshed) {
+        final url = Uri.base.toString();
+        final looksLikeRecovery =
+            url.contains('type=recovery') ||
+            url.contains('code=') ||
+            url.contains('access_token=') ||
+            url.contains('refresh_token=');
+
+        if (looksLikeRecovery) {
+          _goOnce('/reset-password');
+        }
+      }
+    });
+
+    unawaited(_resolveCallback());
+  }
+
+  Future<void> _resolveCallback() async {
+    try {
+      debugPrint('AUTH CALLBACK URL => ${Uri.base}');
+
+      // Give Supabase a short moment to process URL tokens/code automatically.
+      for (var i = 0; i < 30; i++) {
+        if (_sb.auth.currentSession != null) break;
+        await Future<void>.delayed(const Duration(milliseconds: 150));
+      }
+
+      if (!mounted || _navigated) return;
+
+      final session = _sb.auth.currentSession;
+      final auth = ref.read(authControllerProvider);
+      final url = Uri.base.toString();
+
+      final looksLikeRecovery =
+          url.contains('type=recovery') ||
+          url.contains('code=') ||
+          url.contains('access_token=') ||
+          url.contains('refresh_token=');
+
+      if (looksLikeRecovery) {
+        _goOnce('/reset-password');
+        return;
+      }
+
+      if (session != null) {
+        _goOnce(auth.onboardingCompleted ? '/discover' : '/onboarding');
+        return;
+      }
+
+      _goOnce('/login');
+    } catch (e) {
+      debugPrint('AUTH CALLBACK resolve error: $e');
+      if (!mounted) return;
+      _goOnce('/login');
+    }
+  }
+
+  void _goOnce(String route) {
+    if (!mounted || _navigated) return;
+    _navigated = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) context.go(route);
+    });
+  }
+
+  @override
+  void dispose() {
+    _authSub?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final url = Uri.base.toString();
+    final looksLikeRecovery =
+        url.contains('type=recovery') ||
+        url.contains('code=') ||
+        url.contains('access_token=') ||
+        url.contains('refresh_token=');
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Signing you in')),
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const CircularProgressIndicator(),
+              const SizedBox(height: 16),
+              Text(
+                looksLikeRecovery
+                    ? 'Processing password reset link…'
+                    : 'Processing authentication…',
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Please wait a moment. You will be redirected automatically.',
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
