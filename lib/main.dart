@@ -1,15 +1,15 @@
 // lib/main.dart
 import 'dart:async';
 
-import 'package:flutter/foundation.dart' show kIsWeb, kDebugMode;
+import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-import 'core/storage/hive_service.dart';
-import 'core/navigation/app_nav_key.dart';
 import 'app.dart';
+import 'core/navigation/app_nav_key.dart';
+import 'core/storage/hive_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -28,6 +28,7 @@ Future<void> main() async {
       '  --dart-define=SUPABASE_URL=https://<ref>.supabase.co',
     );
   }
+
   if (supabaseAnonKey.isEmpty) {
     throw Exception(
       'Missing SUPABASE_ANON_KEY.\n'
@@ -36,7 +37,6 @@ Future<void> main() async {
     );
   }
 
-  // Helpful debug to confirm you're using the expected project + keys at runtime.
   if (kDebugMode) {
     debugPrint('SUPABASE_URL from env => $supabaseUrl');
     debugPrint('SUPABASE_ANON_KEY length => ${supabaseAnonKey.length}');
@@ -44,18 +44,23 @@ Future<void> main() async {
   }
 
   // 3) Initialize Supabase
-  // NOTE:
-  // - On web, supabase_flutter uses PKCE automatically.
-  // - Do NOT pass FlutterAuthClientOptions(authFlowType: ...) unless your
-  //   supabase_flutter version supports it.
   await Supabase.initialize(
     url: supabaseUrl,
     anonKey: supabaseAnonKey,
-    debug: kDebugMode, // logs only in debug builds
+    debug: kDebugMode,
   );
+
+  final supabase = Supabase.instance.client;
 
   if (kDebugMode) {
     debugPrint('Supabase initialized ✅');
+    debugPrint('STARTUP current user => ${supabase.auth.currentUser?.id}');
+    debugPrint(
+      'STARTUP session exists => ${supabase.auth.currentSession != null}',
+    );
+    debugPrint(
+      'STARTUP token length => ${supabase.auth.currentSession?.accessToken.length ?? 0}',
+    );
   }
 
   // Helper: navigate to reset page reliably (router may not be ready immediately).
@@ -68,14 +73,21 @@ Future<void> main() async {
       }
       await Future<void>.delayed(const Duration(milliseconds: 50));
     }
+
+    if (kDebugMode) {
+      debugPrint('goResetPassword: router context was not ready in time');
+    }
   }
 
-  // 4) Listen for password recovery
-  // With your /auth-callback page, this is "extra safety".
-  Supabase.instance.client.auth.onAuthStateChange.listen((data) {
+  // 4) Listen for auth changes
+  supabase.auth.onAuthStateChange.listen((data) {
     if (kDebugMode) {
       debugPrint(
         'Auth event: ${data.event} | session? ${data.session != null}',
+      );
+      debugPrint('Auth user => ${data.session?.user.id}');
+      debugPrint(
+        'Auth token length => ${data.session?.accessToken.length ?? 0}',
       );
     }
 
@@ -89,24 +101,22 @@ Future<void> main() async {
   // 5) Run app
   runApp(const ProviderScope(child: MyApp()));
 
-  // 6) Cold-start safety (WEB):
-  // Only redirect if THIS load includes recovery params in the URL.
+  // 6) Cold-start safety (WEB)
   unawaited(_coldStartRecoveryCheck(goResetPassword));
 }
 
 Future<void> _coldStartRecoveryCheck(Future<void> Function() goReset) async {
   if (!kIsWeb) return;
 
-  // Let Supabase parse URL tokens (esp. on cold start).
+  // Let Supabase parse URL tokens on cold start.
   await Future<void>.delayed(const Duration(milliseconds: 350));
 
-  final uri = Uri.base; // web current URL
+  final uri = Uri.base;
   final full = uri.toString();
 
   bool containsAny(String s, List<String> needles) =>
       needles.any((n) => s.contains(n));
 
-  // Detect recovery link params (query or fragment)
   final isRecoveryLink =
       containsAny(full, const [
         'type=recovery',
@@ -122,6 +132,10 @@ Future<void> _coldStartRecoveryCheck(Future<void> Function() goReset) async {
       containsAny(uri.query, const ['type=recovery', 'code=']);
 
   if (!isRecoveryLink) return;
+
+  if (kDebugMode) {
+    debugPrint('Cold-start recovery link detected => $full');
+  }
 
   await goReset();
 }
