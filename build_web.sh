@@ -1,12 +1,11 @@
 #!/bin/bash
 set -e
 
-# Install Flutter (stable) into the build workspace
 git clone --depth 1 --branch stable https://github.com/flutter/flutter.git
 export PATH="$PWD/flutter/bin:$PATH"
 
 flutter --version
-
+flutter config --enable-web
 flutter pub get
 
 flutter build web --release \

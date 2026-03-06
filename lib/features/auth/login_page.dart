@@ -1,3 +1,5 @@
+// lib/features/auth/login_page.dart
+import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -23,8 +25,15 @@ class _LoginPageState extends ConsumerState<LoginPage> {
   void initState() {
     super.initState();
 
+    // Helpful debug: confirm what URL the compiled build is using.
+    // On Vercel, if you still see "yourproject.supabase.co", your build env is wrong / cached.
+    if (kDebugMode) {
+      const envUrl = String.fromEnvironment('SUPABASE_URL');
+      debugPrint('LOGIN: SUPABASE_URL env => $envUrl');
+      debugPrint('LOGIN: origin => ${kIsWeb ? Uri.base.origin : "(not web)"}');
+    }
+
     // If user is already logged in, bounce them out of the login screen.
-    // (Helps avoid "session? false" confusion when the app restored a session.)
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final session = Supabase.instance.client.auth.currentSession;
       if (session != null && mounted) {
@@ -48,47 +57,79 @@ class _LoginPageState extends ConsumerState<LoginPage> {
   }
 
   String? _validatePassword(String v) {
-    if (v.trim().isEmpty) return 'Password is required';
-    if (v.trim().length < 6) return 'Password must be at least 6 characters';
+    // Do NOT trim password; allow leading/trailing spaces if user set them.
+    if (v.isEmpty) return 'Password is required';
+    if (v.length < 6) return 'Password must be at least 6 characters';
     return null;
   }
 
+  void _toast(String msg) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  }
+
   Future<void> _login() async {
-    final email = _emailController.text;
-    final password = _passwordController.text;
+    FocusScope.of(context).unfocus();
+
+    final email = _emailController.text.trim().toLowerCase();
+    final password = _passwordController.text; // don't trim password
 
     final emailErr = _validateEmail(email);
     final passErr = _validatePassword(password);
 
     if (emailErr != null || passErr != null) {
-      final msg = emailErr ?? passErr!;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+      _toast(emailErr ?? passErr!);
       return;
     }
 
     setState(() => _loading = true);
 
     try {
+      // Debug sanity check for the deployed build:
+      // if the env is missing, Supabase calls will hit placeholders.
+      if (kDebugMode) {
+        const envUrl = String.fromEnvironment('SUPABASE_URL');
+        if (envUrl.isEmpty || envUrl.contains('yourproject')) {
+          debugPrint('LOGIN WARNING: SUPABASE_URL env looks wrong => $envUrl');
+        }
+      }
+
       await ref
           .read(authControllerProvider.notifier)
-          .login(email: email.trim(), password: password.trim());
+          .login(email: email, password: password);
 
       // ✅ After successful login, the session should exist.
       final session = Supabase.instance.client.auth.currentSession;
       if (session == null) {
         throw Exception(
-          'Login succeeded but session is missing. Try again (or check Supabase auth settings).',
+          'Login succeeded but session is missing. '
+          'This usually means the app is not using the correct Supabase config.',
         );
       }
 
-      // Navigate after login. (Router redirect may also handle this, but this is explicit.)
       if (!mounted) return;
       context.go('/discover');
+    } on AuthException catch (e) {
+      if (!mounted) return;
+
+      final msg = e.message;
+
+      // Friendly message for common web failure (CORS / wrong env / cached old build)
+      if (msg.toLowerCase().contains('failed to fetch')) {
+        final origin = kIsWeb ? Uri.base.origin : '';
+        _toast(
+          'Network error (Failed to fetch).\n\n'
+          'Common causes:\n'
+          '1) Vercel build missing SUPABASE_URL / SUPABASE_ANON_KEY (Flutter web needs --dart-define at build time)\n'
+          '2) Supabase CORS missing: $origin\n'
+          '3) Old cached service worker (Flutter PWA) — clear site data/unregister SW.\n',
+        );
+        return;
+      }
+
+      _toast(msg);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(e.toString())));
+      _toast(e.toString());
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -106,7 +147,6 @@ class _LoginPageState extends ConsumerState<LoginPage> {
           padding: const EdgeInsets.all(16),
           children: [
             const SizedBox(height: 8),
-
             TextField(
               controller: _emailController,
               keyboardType: TextInputType.emailAddress,
@@ -120,9 +160,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                 hintText: 'you@example.com',
               ),
             ),
-
             const SizedBox(height: 12),
-
             TextField(
               controller: _passwordController,
               obscureText: _obscure,
@@ -154,7 +192,6 @@ class _LoginPageState extends ConsumerState<LoginPage> {
             ),
 
             const SizedBox(height: 12),
-
             SizedBox(
               height: 48,
               child: ElevatedButton(
@@ -162,9 +199,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                 child: Text(_loading ? 'Signing in…' : 'Login'),
               ),
             ),
-
             const SizedBox(height: 12),
-
             TextButton(
               onPressed: _loading ? null : () => context.go('/register'),
               child: const Text('Create an account'),
