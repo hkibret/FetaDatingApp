@@ -173,13 +173,18 @@ class _UpgradePaywallPageState extends ConsumerState<UpgradePaywallPage> {
 
     try {
       var session = supabase.auth.currentSession;
+      var user = supabase.auth.currentUser;
 
-      if (session == null) {
-        final refreshed = await supabase.auth.refreshSession();
-        session = refreshed.session;
+      // If user/session not present, try a refresh once.
+      if (session == null || user == null || session.accessToken.isEmpty) {
+        try {
+          final refreshed = await supabase.auth.refreshSession();
+          session = refreshed.session;
+          user = supabase.auth.currentUser;
+        } catch (e) {
+          debugPrint('CHECKOUT refreshSession failed => $e');
+        }
       }
-
-      final user = supabase.auth.currentUser;
 
       debugPrint('CHECKOUT user id => ${user?.id}');
       debugPrint('CHECKOUT session exists => ${session != null}');
@@ -187,11 +192,9 @@ class _UpgradePaywallPageState extends ConsumerState<UpgradePaywallPage> {
         'CHECKOUT token length => ${session?.accessToken.length ?? 0}',
       );
 
-      if (session == null || session.accessToken.isEmpty) {
+      if (user == null || session == null || session.accessToken.isEmpty) {
         throw Exception('No active session found. Please log in again.');
       }
-
-      supabase.functions.setAuth(session.accessToken);
 
       final response = await supabase.functions.invoke(
         'stripe-create-checkout',
@@ -234,15 +237,17 @@ class _UpgradePaywallPageState extends ConsumerState<UpgradePaywallPage> {
       debugPrint('Checkout function error: $e');
 
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            e.details != null
-                ? 'Checkout failed: ${e.details}'
-                : 'Checkout failed: ${e.reasonPhrase ?? e.toString()}',
-          ),
-        ),
-      );
+
+      final details = e.details?.toString() ?? '';
+      final message = details.contains('Invalid JWT')
+          ? 'Your session expired. Please log out and log back in, then try again.'
+          : (details.isNotEmpty
+                ? 'Checkout failed: $details'
+                : 'Checkout failed: ${e.reasonPhrase ?? e.toString()}');
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
     } catch (e) {
       debugPrint('Checkout failed: $e');
 
