@@ -51,10 +51,8 @@ class _UpgradePaywallPageState extends ConsumerState<UpgradePaywallPage> {
   bool _optIn = true;
   bool _checkoutLoading = false;
 
-  // Default selection = "popular" (3 months)
   String _selectedPriceKey = 'platinum_3m';
 
-  // Top carousel content
   final _features = const <PaywallFeature>[
     PaywallFeature(
       icon: Icons.chat_bubble_outline,
@@ -170,21 +168,31 @@ class _UpgradePaywallPageState extends ConsumerState<UpgradePaywallPage> {
     if (_checkoutLoading) return;
 
     final supabase = Supabase.instance.client;
-    final session = supabase.auth.currentSession;
-
-    if (session == null) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Please log in before starting checkout.'),
-        ),
-      );
-      return;
-    }
 
     setState(() => _checkoutLoading = true);
 
     try {
+      var session = supabase.auth.currentSession;
+
+      if (session == null) {
+        final refreshed = await supabase.auth.refreshSession();
+        session = refreshed.session;
+      }
+
+      final user = supabase.auth.currentUser;
+
+      debugPrint('CHECKOUT user id => ${user?.id}');
+      debugPrint('CHECKOUT session exists => ${session != null}');
+      debugPrint(
+        'CHECKOUT token length => ${session?.accessToken.length ?? 0}',
+      );
+
+      if (session == null || session.accessToken.isEmpty) {
+        throw Exception('No active session found. Please log in again.');
+      }
+
+      supabase.functions.setAuth(session.accessToken);
+
       final response = await supabase.functions.invoke(
         'stripe-create-checkout',
         body: {'priceKey': selected.priceKey},
@@ -215,8 +223,15 @@ class _UpgradePaywallPageState extends ConsumerState<UpgradePaywallPage> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text('Opening checkout...')));
+    } on AuthException catch (e) {
+      debugPrint('Checkout auth error: ${e.message}');
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Auth error: ${e.message}')));
     } on FunctionException catch (e) {
-      debugPrint('Checkout failed: $e');
+      debugPrint('Checkout function error: $e');
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -341,7 +356,6 @@ class _UpgradePaywallPageState extends ConsumerState<UpgradePaywallPage> {
               ..._tierFeatures.map((f) => _FeatureRow(text: f)),
             ],
           ),
-
           Positioned(
             left: 0,
             right: 0,
