@@ -1,5 +1,4 @@
 // lib/features/billing/billing_service.dart
-import 'dart:html' as html;
 import 'package:flutter/foundation.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -23,8 +22,15 @@ class BillingService {
       // Web
       // =========================
       if (kIsWeb) {
-        // Stripe recommends opening checkout in new tab
-        html.window.open(uri.toString(), '_blank');
+        final launched = await launchUrl(
+          uri,
+          mode: LaunchMode.platformDefault,
+          webOnlyWindowName: '_self',
+        );
+
+        if (!launched) {
+          throw Exception('Could not open checkout URL in browser');
+        }
         return;
       }
 
