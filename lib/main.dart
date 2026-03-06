@@ -23,13 +23,24 @@ Future<void> main() async {
 
   if (supabaseUrl.isEmpty || !supabaseUrl.startsWith('http')) {
     throw Exception(
-      'Missing/invalid SUPABASE_URL. Pass it via --dart-define=SUPABASE_URL=...',
+      'Missing/invalid SUPABASE_URL.\n'
+      'Run with:\n'
+      '  --dart-define=SUPABASE_URL=https://<ref>.supabase.co',
     );
   }
   if (supabaseAnonKey.isEmpty) {
     throw Exception(
-      'Missing SUPABASE_ANON_KEY. Pass it via --dart-define=SUPABASE_ANON_KEY=...',
+      'Missing SUPABASE_ANON_KEY.\n'
+      'Run with:\n'
+      '  --dart-define=SUPABASE_ANON_KEY=<your anon key>',
     );
+  }
+
+  // Helpful debug to confirm you're using the expected project + keys at runtime.
+  if (kDebugMode) {
+    debugPrint('SUPABASE_URL from env => $supabaseUrl');
+    debugPrint('SUPABASE_ANON_KEY length => ${supabaseAnonKey.length}');
+    debugPrint('WEB origin => ${kIsWeb ? Uri.base.origin : "(not web)"}');
   }
 
   // 3) Initialize Supabase
@@ -40,18 +51,16 @@ Future<void> main() async {
   await Supabase.initialize(
     url: supabaseUrl,
     anonKey: supabaseAnonKey,
-    debug: kIsWeb, // optional (logs only on web)
+    debug: kDebugMode, // logs only in debug builds
   );
 
-  // Helpful debug to confirm you're using the expected project + keys at runtime.
   if (kDebugMode) {
-    debugPrint('Supabase URL: $supabaseUrl');
-    debugPrint('Supabase anon key length: ${supabaseAnonKey.length}');
+    debugPrint('Supabase initialized ✅');
   }
 
   // Helper: navigate to reset page reliably (router may not be ready immediately).
   Future<void> goResetPassword() async {
-    for (var i = 0; i < 25; i++) {
+    for (var i = 0; i < 40; i++) {
       final ctx = rootNavigatorKey.currentContext;
       if (ctx != null && ctx.mounted) {
         GoRouter.of(ctx).go('/reset-password');
@@ -62,6 +71,7 @@ Future<void> main() async {
   }
 
   // 4) Listen for password recovery
+  // With your /auth-callback page, this is "extra safety".
   Supabase.instance.client.auth.onAuthStateChange.listen((data) {
     if (kDebugMode) {
       debugPrint(
@@ -88,7 +98,7 @@ Future<void> _coldStartRecoveryCheck(Future<void> Function() goReset) async {
   if (!kIsWeb) return;
 
   // Let Supabase parse URL tokens (esp. on cold start).
-  await Future<void>.delayed(const Duration(milliseconds: 300));
+  await Future<void>.delayed(const Duration(milliseconds: 350));
 
   final uri = Uri.base; // web current URL
   final full = uri.toString();
@@ -115,6 +125,3 @@ Future<void> _coldStartRecoveryCheck(Future<void> Function() goReset) async {
 
   await goReset();
 }
-
-// Convenience client
-final supabase = Supabase.instance.client;
