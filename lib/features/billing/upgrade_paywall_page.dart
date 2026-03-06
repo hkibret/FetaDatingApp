@@ -1,5 +1,8 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:http/http.dart' as http;
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'billing_service.dart';
@@ -52,6 +55,11 @@ class _UpgradePaywallPageState extends ConsumerState<UpgradePaywallPage> {
   bool _checkoutLoading = false;
 
   String _selectedPriceKey = 'platinum_3m';
+
+  static const String _supabaseUrl = String.fromEnvironment('SUPABASE_URL');
+  static const String _supabaseAnonKey = String.fromEnvironment(
+    'SUPABASE_ANON_KEY',
+  );
 
   final _features = const <PaywallFeature>[
     PaywallFeature(
@@ -175,7 +183,6 @@ class _UpgradePaywallPageState extends ConsumerState<UpgradePaywallPage> {
       var session = supabase.auth.currentSession;
       var user = supabase.auth.currentUser;
 
-      // If user/session not present, try a refresh once.
       if (session == null || user == null || session.accessToken.isEmpty) {
         try {
           final refreshed = await supabase.auth.refreshSession();
@@ -196,25 +203,75 @@ class _UpgradePaywallPageState extends ConsumerState<UpgradePaywallPage> {
         throw Exception('No active session found. Please log in again.');
       }
 
-      final response = await supabase.functions.invoke(
-        'stripe-create-checkout',
-        body: {'priceKey': selected.priceKey},
-        headers: {'Authorization': 'Bearer ${session.accessToken}'},
+      if (_supabaseUrl.isEmpty || _supabaseAnonKey.isEmpty) {
+        throw Exception(
+          'Missing Supabase configuration. Check SUPABASE_URL and SUPABASE_ANON_KEY.',
+        );
+      }
+
+      final functionUrl = '$_supabaseUrl/functions/v1/stripe-create-checkout';
+
+      final response = await http.post(
+        Uri.parse(functionUrl),
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': _supabaseAnonKey,
+          'Authorization': 'Bearer ${session.accessToken}',
+        },
+        body: jsonEncode({'priceKey': selected.priceKey}),
       );
 
-      final data = response.data;
+      debugPrint('CHECKOUT raw status => ${response.statusCode}');
+      debugPrint('CHECKOUT raw body => ${response.body}');
 
+      if (response.statusCode != 200) {
+        String message = 'Checkout failed (${response.statusCode}).';
+
+        try {
+          final body = jsonDecode(response.body);
+          if (body is Map<String, dynamic>) {
+            final error = body['error']?.toString();
+            final details = body['details']?.toString();
+            final code = body['code']?.toString();
+            final apiMessage = body['message']?.toString();
+
+            if (apiMessage != null && apiMessage.isNotEmpty) {
+              message = apiMessage;
+            } else if (error != null && error.isNotEmpty) {
+              message = error;
+            }
+
+            if (details != null && details.isNotEmpty) {
+              message = '$message: $details';
+            } else if (code != null && code.isNotEmpty) {
+              message = '$message (code: $code)';
+            }
+          }
+        } catch (_) {
+          if (response.body.isNotEmpty) {
+            message = 'Checkout failed: ${response.body}';
+          }
+        }
+
+        if (message.contains('Invalid JWT')) {
+          message =
+              'Your session expired. Please log out and log back in, then try again.';
+        }
+
+        throw Exception(message);
+      }
+
+      final decoded = jsonDecode(response.body);
       String? checkoutUrl;
-      if (data is Map<String, dynamic>) {
-        checkoutUrl = data['url'] as String?;
-      } else if (data is Map) {
-        checkoutUrl = data['url']?.toString();
+
+      if (decoded is Map<String, dynamic>) {
+        checkoutUrl = decoded['url'] as String?;
+      } else if (decoded is Map) {
+        checkoutUrl = decoded['url']?.toString();
       }
 
       if (checkoutUrl == null || checkoutUrl.isEmpty) {
-        throw Exception(
-          'Checkout URL was not returned by stripe-create-checkout.',
-        );
+        throw Exception('Checkout URL missing from function response.');
       }
 
       debugPrint('Stripe checkout URL: $checkoutUrl');
@@ -233,21 +290,6 @@ class _UpgradePaywallPageState extends ConsumerState<UpgradePaywallPage> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('Auth error: ${e.message}')));
-    } on FunctionException catch (e) {
-      debugPrint('Checkout function error: $e');
-
-      if (!mounted) return;
-
-      final details = e.details?.toString() ?? '';
-      final message = details.contains('Invalid JWT')
-          ? 'Your session expired. Please log out and log back in, then try again.'
-          : (details.isNotEmpty
-                ? 'Checkout failed: $details'
-                : 'Checkout failed: ${e.reasonPhrase ?? e.toString()}');
-
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(message)));
     } catch (e) {
       debugPrint('Checkout failed: $e');
 
