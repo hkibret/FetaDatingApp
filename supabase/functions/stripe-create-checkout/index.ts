@@ -182,10 +182,12 @@ Deno.serve(async (req) => {
 
     console.log("Creating checkout for user:", user.id);
     console.log("Using priceKey:", normalizedPriceKey);
+    console.log("Using priceId:", priceId);
     console.log("Using siteUrl:", siteUrl);
 
     const checkoutSession = await stripe.checkout.sessions.create({
       mode: "subscription",
+      payment_method_types: ["card"],
       line_items: [{ price: priceId, quantity: 1 }],
       success_url: `${siteUrl}/#/upgrade/success`,
       cancel_url: `${siteUrl}/#/upgrade/cancel`,
