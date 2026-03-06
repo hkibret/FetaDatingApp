@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
-import 'billing_providers.dart';
 import 'billing_service.dart';
 
 enum PlanTier { gold, platinum }
@@ -49,6 +49,7 @@ class _UpgradePaywallPageState extends ConsumerState<UpgradePaywallPage> {
 
   PlanTier _tier = PlanTier.platinum;
   bool _optIn = true;
+  bool _checkoutLoading = false;
 
   // Default selection = "popular" (3 months)
   String _selectedPriceKey = 'platinum_3m';
@@ -108,7 +109,6 @@ class _UpgradePaywallPageState extends ConsumerState<UpgradePaywallPage> {
       ];
     }
 
-    // Platinum
     return const [
       PricingOption(
         priceKey: 'platinum_12m',
@@ -158,14 +158,88 @@ class _UpgradePaywallPageState extends ConsumerState<UpgradePaywallPage> {
   void _onTierChanged(PlanTier tier) {
     setState(() {
       _tier = tier;
-
-      // Keep selection aligned (if user was on platinum_3m, switch to gold_3m)
       final months = _selectedOption.months;
       final nextKey = '${tier.name}_${months}m';
       _selectedPriceKey = _options.any((o) => o.priceKey == nextKey)
           ? nextKey
           : _options[1].priceKey;
     });
+  }
+
+  Future<void> _startCheckout(PricingOption selected) async {
+    if (_checkoutLoading) return;
+
+    final supabase = Supabase.instance.client;
+    final session = supabase.auth.currentSession;
+
+    if (session == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please log in before starting checkout.'),
+        ),
+      );
+      return;
+    }
+
+    setState(() => _checkoutLoading = true);
+
+    try {
+      final response = await supabase.functions.invoke(
+        'stripe-create-checkout',
+        body: {'priceKey': selected.priceKey},
+        headers: {'Authorization': 'Bearer ${session.accessToken}'},
+      );
+
+      final data = response.data;
+
+      String? checkoutUrl;
+      if (data is Map<String, dynamic>) {
+        checkoutUrl = data['url'] as String?;
+      } else if (data is Map) {
+        checkoutUrl = data['url']?.toString();
+      }
+
+      if (checkoutUrl == null || checkoutUrl.isEmpty) {
+        throw Exception(
+          'Checkout URL was not returned by stripe-create-checkout.',
+        );
+      }
+
+      debugPrint('Stripe checkout URL: $checkoutUrl');
+
+      final service = BillingService();
+      await service.openExternalUrl(checkoutUrl);
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Opening checkout...')));
+    } on FunctionException catch (e) {
+      debugPrint('Checkout failed: $e');
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            e.details != null
+                ? 'Checkout failed: ${e.details}'
+                : 'Checkout failed: ${e.reasonPhrase ?? e.toString()}',
+          ),
+        ),
+      );
+    } catch (e) {
+      debugPrint('Checkout failed: $e');
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Checkout failed: $e')));
+    } finally {
+      if (mounted) {
+        setState(() => _checkoutLoading = false);
+      }
+    }
   }
 
   @override
@@ -178,7 +252,6 @@ class _UpgradePaywallPageState extends ConsumerState<UpgradePaywallPage> {
   Widget build(BuildContext context) {
     final selected = _selectedOption;
 
-    // CTA overlay height
     const ctaHeight = 72.0;
     final bottomInset = MediaQuery.of(context).padding.bottom;
 
@@ -202,13 +275,11 @@ class _UpgradePaywallPageState extends ConsumerState<UpgradePaywallPage> {
                 onChanged: (i) => setState(() => _featureIndex = i),
               ),
               const SizedBox(height: 12),
-
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: _TierSwitch(tier: _tier, onChanged: _onTierChanged),
               ),
               const SizedBox(height: 14),
-
               SizedBox(
                 height: 178,
                 child: ListView.separated(
@@ -229,9 +300,7 @@ class _UpgradePaywallPageState extends ConsumerState<UpgradePaywallPage> {
                   },
                 ),
               ),
-
               const SizedBox(height: 14),
-
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: Row(
@@ -251,9 +320,7 @@ class _UpgradePaywallPageState extends ConsumerState<UpgradePaywallPage> {
                   ],
                 ),
               ),
-
               const SizedBox(height: 10),
-
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: Row(
@@ -270,14 +337,11 @@ class _UpgradePaywallPageState extends ConsumerState<UpgradePaywallPage> {
                   ],
                 ),
               ),
-
               const SizedBox(height: 10),
-
               ..._tierFeatures.map((f) => _FeatureRow(text: f)),
             ],
           ),
 
-          // ✅ Sticky CTA overlay
           Positioned(
             left: 0,
             right: 0,
@@ -300,34 +364,8 @@ class _UpgradePaywallPageState extends ConsumerState<UpgradePaywallPage> {
                   height: 52,
                   width: double.infinity,
                   child: ElevatedButton(
-                    onPressed: _optIn
-                        ? () async {
-                            try {
-                              final repo = ref.read(billingRepoProvider);
-                              final service = BillingService();
-
-                              final url = await repo.createCheckoutUrl(
-                                priceKey: selected.priceKey,
-                              );
-
-                              debugPrint('Stripe checkout URL: $url');
-
-                              await service.openExternalUrl(url);
-
-                              if (!mounted) return;
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text('Opening checkout...'),
-                                ),
-                              );
-                            } catch (e) {
-                              debugPrint('Checkout failed: $e');
-                              if (!mounted) return;
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(content: Text('Checkout failed: $e')),
-                              );
-                            }
-                          }
+                    onPressed: (_optIn && !_checkoutLoading)
+                        ? () => _startCheckout(selected)
                         : null,
                     style: ElevatedButton.styleFrom(
                       shape: RoundedRectangleBorder(
@@ -335,7 +373,9 @@ class _UpgradePaywallPageState extends ConsumerState<UpgradePaywallPage> {
                       ),
                     ),
                     child: Text(
-                      'Get ${selected.months} ${selected.months == 1 ? "month" : "months"} for \$${selected.totalPrice.toStringAsFixed(2)}',
+                      _checkoutLoading
+                          ? 'Opening checkout...'
+                          : 'Get ${selected.months} ${selected.months == 1 ? "month" : "months"} for \$${selected.totalPrice.toStringAsFixed(2)}',
                     ),
                   ),
                 ),
