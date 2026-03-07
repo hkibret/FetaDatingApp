@@ -1,11 +1,12 @@
 // lib/features/auth/auth_controller.dart
-import 'dart:async'; // StreamSubscription + unawaited
+import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart' as sb;
 
 import '../../core/storage/hive_service.dart';
+import '../profile/providers/profile_providers.dart';
 
 class AuthState {
   final bool isLoggedIn;
@@ -13,7 +14,7 @@ class AuthState {
   final String? userId;
   final String? email;
 
-  /// ✅ controls onboarding gate after login
+  /// controls onboarding gate after login
   final bool onboardingCompleted;
 
   const AuthState({
@@ -50,13 +51,11 @@ class AuthController extends Notifier<AuthState> {
 
   @override
   AuthState build() {
-    // ✅ Ensure we don't register multiple listeners on rebuilds.
     ref.onDispose(() {
       _authSub?.cancel();
       _authSub = null;
     });
 
-    // ✅ Keep state synced with Supabase session changes.
     _authSub ??= _sb.auth.onAuthStateChange.listen((sb.AuthState data) async {
       if (kDebugMode) {
         debugPrint(
@@ -83,23 +82,23 @@ class AuthController extends Notifier<AuthState> {
           userId: user.id,
           onboardingCompleted: onboardingDone,
         );
+
+        _invalidateUserScopedProviders();
       } else {
         await HiveService.clearAuth();
         state = const AuthState.loggedOut();
+        _invalidateUserScopedProviders();
       }
     });
 
-    // Hive boxes are opened in main() before runApp() so reads are sync.
     final token = HiveService.getToken();
     final email = HiveService.getEmail();
     final userId = HiveService.authBox.get('userId') as String?;
 
-    // Prefer Supabase current session if exists.
     final session = _sb.auth.currentSession;
     final user = _sb.auth.currentUser;
 
     if (session != null && user != null) {
-      // build() can't be async, so return quickly and sync flag after
       final initial = AuthState(
         isLoggedIn: true,
         token: session.accessToken,
@@ -108,26 +107,22 @@ class AuthController extends Notifier<AuthState> {
         onboardingCompleted: false,
       );
 
-      // Keep Hive in sync (best-effort)
-      HiveService.saveAuth(
-        token: session.accessToken,
-        email: (user.email ?? email ?? '').trim().toLowerCase(),
-        userId: user.id,
+      unawaited(
+        HiveService.saveAuth(
+          token: session.accessToken,
+          email: (user.email ?? email ?? '').trim().toLowerCase(),
+          userId: user.id,
+        ),
       );
 
-      // ✅ async sync onboarding flag
       unawaited(_syncOnboardingFlag(user.id));
 
       return initial;
     }
 
-    // ✅ CRITICAL FIX:
-    // Hive token != Supabase session. Do NOT treat Hive token as logged-in.
-    // This avoids false positives where you *think* you're logged in but
-    // Supabase has no session (causes Invalid JWT / Not logged in later).
     if (token != null && token.isNotEmpty) {
       return AuthState(
-        isLoggedIn: false, // ✅ important
+        isLoggedIn: false,
         token: token,
         email: email,
         userId: userId,
@@ -138,6 +133,12 @@ class AuthController extends Notifier<AuthState> {
     return const AuthState.loggedOut();
   }
 
+  void _invalidateUserScopedProviders() {
+    ref.invalidate(authUserIdProvider);
+    ref.invalidate(myProfileProvider);
+    ref.invalidate(discoverProfilesProvider);
+  }
+
   Future<void> _syncOnboardingFlag(String userId) async {
     try {
       final done = await _fetchOnboardingCompletedSafe(userId);
@@ -145,11 +146,10 @@ class AuthController extends Notifier<AuthState> {
         state = state.copyWith(onboardingCompleted: done);
       }
     } catch (_) {
-      // ignore; keep false
+      // ignore
     }
   }
 
-  /// ✅ Safe: does not throw if profiles row/column isn't ready yet.
   Future<bool> _fetchOnboardingCompletedSafe(String userId) async {
     try {
       final res = await _sb
@@ -164,15 +164,16 @@ class AuthController extends Notifier<AuthState> {
     }
   }
 
-  /// ✅ Call this after onboarding submit succeeds
   void markOnboardingCompleted() {
     if (!state.isLoggedIn) return;
     state = state.copyWith(onboardingCompleted: true);
+    _invalidateUserScopedProviders();
   }
 
   void markOnboardingIncomplete() {
     if (!state.isLoggedIn) return;
     state = state.copyWith(onboardingCompleted: false);
+    _invalidateUserScopedProviders();
   }
 
   Future<sb.AuthResponse> login({
@@ -187,6 +188,10 @@ class AuthController extends Notifier<AuthState> {
     }
 
     try {
+      await HiveService.clearAuth();
+      state = const AuthState.loggedOut();
+      _invalidateUserScopedProviders();
+
       final res = await _sb.auth.signInWithPassword(email: e, password: p);
 
       final session = res.session;
@@ -196,10 +201,9 @@ class AuthController extends Notifier<AuthState> {
         throw Exception('Login failed. No session returned.');
       }
 
-      // ✅ Helpful debug for your Stripe/JWT testing
       if (kDebugMode) {
         debugPrint('LOGIN access token length: ${session.accessToken.length}');
-        debugPrint('LOGIN refresh token: ${session.refreshToken ?? ""}');
+        debugPrint('LOGIN user id: ${user.id}');
       }
 
       final onboardingDone = await _fetchOnboardingCompletedSafe(user.id);
@@ -217,6 +221,8 @@ class AuthController extends Notifier<AuthState> {
         userId: user.id,
         onboardingCompleted: onboardingDone,
       );
+
+      _invalidateUserScopedProviders();
 
       return res;
     } on sb.AuthException catch (ex) {
@@ -244,6 +250,10 @@ class AuthController extends Notifier<AuthState> {
     }
 
     try {
+      await HiveService.clearAuth();
+      state = const AuthState.loggedOut();
+      _invalidateUserScopedProviders();
+
       final res = await _sb.auth.signUp(
         email: e,
         password: password,
@@ -257,11 +267,18 @@ class AuthController extends Notifier<AuthState> {
         throw Exception('Registration failed. No user returned.');
       }
 
-      // Email confirmation ON: session null but user created -> success
       if (session == null) {
         await HiveService.clearAuth();
         state = const AuthState.loggedOut();
+        _invalidateUserScopedProviders();
         return res;
+      }
+
+      if (kDebugMode) {
+        debugPrint(
+          'REGISTER access token length: ${session.accessToken.length}',
+        );
+        debugPrint('REGISTER user id: ${user.id}');
       }
 
       final onboardingDone = await _fetchOnboardingCompletedSafe(user.id);
@@ -280,6 +297,8 @@ class AuthController extends Notifier<AuthState> {
         onboardingCompleted: onboardingDone,
       );
 
+      _invalidateUserScopedProviders();
+
       return res;
     } on sb.AuthException catch (ex) {
       throw Exception(ex.message);
@@ -295,6 +314,7 @@ class AuthController extends Notifier<AuthState> {
 
     await HiveService.clearAuth();
     state = const AuthState.loggedOut();
+    _invalidateUserScopedProviders();
   }
 }
 
