@@ -14,10 +14,15 @@ class ProfileRepo {
     final user = _client.auth.currentUser;
     if (user == null) return null;
 
+    return fetchProfileById(user.id);
+  }
+
+  /// Fetch any profile by id
+  Future<Profile?> fetchProfileById(String userId) async {
     final data = await _client
         .from('profiles')
         .select()
-        .eq('id', user.id)
+        .eq('id', userId)
         .maybeSingle();
 
     if (data == null) return null;
@@ -29,6 +34,7 @@ class ProfileRepo {
   /// - my interested_in
   /// - candidate gender
   /// - candidate interested_in
+  /// - only users with real uploaded images
   Future<List<Profile>> fetchDiscoverProfiles() async {
     final user = _client.auth.currentUser;
     if (user == null) return [];
@@ -111,8 +117,8 @@ class ProfileRepo {
       'location': location,
       'avatar_url': avatarUrl,
       'photos': photos,
-      'gender': gender?.toLowerCase(),
-      'interested_in': interestedIn?.toLowerCase(),
+      'gender': gender?.trim().toLowerCase(),
+      'interested_in': interestedIn?.trim().toLowerCase(),
       'onboarding_completed': onboardingCompleted,
       'body_type': bodyType,
       'height_cm': heightCm,
@@ -128,5 +134,19 @@ class ProfileRepo {
     payload.removeWhere((key, value) => value == null);
 
     await _client.from('profiles').upsert(payload);
+  }
+
+  /// Clear avatar for the current user
+  Future<void> clearAvatar() async {
+    final user = _client.auth.currentUser;
+    if (user == null) throw Exception('Not authenticated');
+
+    await _client
+        .from('profiles')
+        .update({
+          'avatar_url': null,
+          'updated_at': DateTime.now().toIso8601String(),
+        })
+        .eq('id', user.id);
   }
 }
