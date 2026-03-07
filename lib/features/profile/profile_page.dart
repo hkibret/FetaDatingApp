@@ -58,6 +58,8 @@ class ProfilePage extends ConsumerWidget {
         ),
         data: (profile) {
           final avatarUrl = profile?.avatarUrl;
+          final hasAvatar = avatarUrl != null && avatarUrl.isNotEmpty;
+
           final displayName =
               (profile?.name != null && profile!.name!.trim().isNotEmpty)
               ? profile.name!.trim()
@@ -105,29 +107,19 @@ class ProfilePage extends ConsumerWidget {
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      if (avatarUrl != null && avatarUrl.isNotEmpty)
-                        CircleAvatar(
-                          radius: 32,
-                          backgroundColor: Theme.of(
-                            context,
-                          ).colorScheme.surfaceContainerHighest,
-                          child: ClipOval(
-                            child: Image.network(
-                              avatarUrl,
-                              width: 64,
-                              height: 64,
-                              fit: BoxFit.cover,
-                              errorBuilder: (_, __, ___) =>
-                                  const Icon(Icons.person, size: 32),
-                            ),
+                      if (hasAvatar)
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(32),
+                          child: Image.network(
+                            avatarUrl,
+                            width: 64,
+                            height: 64,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) =>
+                                const SizedBox(width: 64, height: 64),
                           ),
-                        )
-                      else
-                        const CircleAvatar(
-                          radius: 32,
-                          child: Icon(Icons.person, size: 32),
                         ),
-                      const SizedBox(width: 16),
+                      if (hasAvatar) const SizedBox(width: 16),
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -161,6 +153,14 @@ class ProfilePage extends ConsumerWidget {
                                     ?.copyWith(color: Colors.grey),
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
+                              ),
+                            ],
+                            if (!hasAvatar) ...[
+                              const SizedBox(height: 12),
+                              OutlinedButton.icon(
+                                onPressed: () => context.push('/profile/edit'),
+                                icon: const Icon(Icons.add_a_photo_outlined),
+                                label: const Text('Add Photo'),
                               ),
                             ],
                           ],

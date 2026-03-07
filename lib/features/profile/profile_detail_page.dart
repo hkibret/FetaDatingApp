@@ -93,25 +93,19 @@ class _ProfileDetailBody extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final avatar = profile.avatarUrl;
+    final hasAvatar = avatar != null && avatar.isNotEmpty;
 
     return ListView(
       children: [
-        AspectRatio(
-          aspectRatio: 3 / 4,
-          child: avatar != null && avatar.isNotEmpty
-              ? Image.network(
-                  avatar,
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => Container(
-                    color: Colors.grey.shade300,
-                    child: const Center(child: Icon(Icons.person, size: 72)),
-                  ),
-                )
-              : Container(
-                  color: Colors.grey.shade300,
-                  child: const Center(child: Icon(Icons.person, size: 72)),
-                ),
-        ),
+        if (hasAvatar)
+          AspectRatio(
+            aspectRatio: 3 / 4,
+            child: Image.network(
+              avatar,
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+            ),
+          ),
 
         Padding(
           padding: const EdgeInsets.all(16),
@@ -125,7 +119,8 @@ class _ProfileDetailBody extends StatelessWidget {
 
               const SizedBox(height: 8),
 
-              if (profile.location != null)
+              if (profile.location != null &&
+                  profile.location!.trim().isNotEmpty)
                 Text(
                   profile.location!,
                   style: Theme.of(context).textTheme.titleMedium,
@@ -135,20 +130,20 @@ class _ProfileDetailBody extends StatelessWidget {
 
               Wrap(
                 spacing: 8,
+                runSpacing: 8,
                 children: [
-                  if (profile.gender != null)
+                  if (profile.gender != null &&
+                      profile.gender!.trim().isNotEmpty)
                     Chip(label: Text(profile.gender!)),
-
-                  if (profile.interestedIn != null)
+                  if (profile.interestedIn != null &&
+                      profile.interestedIn!.trim().isNotEmpty)
                     Chip(label: Text('Interested in ${profile.interestedIn}')),
-
                   if (isMatched) const Chip(label: Text('Matched')),
                 ],
               ),
 
-              const SizedBox(height: 20),
-
-              if (profile.bio != null && profile.bio!.isNotEmpty) ...[
+              if (profile.bio != null && profile.bio!.trim().isNotEmpty) ...[
+                const SizedBox(height: 20),
                 const Text(
                   'About',
                   style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
@@ -170,28 +165,28 @@ class _ProfileDetailBody extends StatelessWidget {
                 spacing: 8,
                 runSpacing: 8,
                 children: [
-                  if (profile.bodyType != null)
+                  if (profile.bodyType != null &&
+                      profile.bodyType!.trim().isNotEmpty)
                     Chip(label: Text('Body: ${profile.bodyType}')),
-
                   if (profile.heightCm != null)
                     Chip(label: Text('Height: ${profile.heightCm} cm')),
-
-                  if (profile.smoking != null)
+                  if (profile.smoking != null &&
+                      profile.smoking!.trim().isNotEmpty)
                     Chip(label: Text('Smoking: ${profile.smoking}')),
-
-                  if (profile.drinking != null)
+                  if (profile.drinking != null &&
+                      profile.drinking!.trim().isNotEmpty)
                     Chip(label: Text('Drinking: ${profile.drinking}')),
-
-                  if (profile.datingIntent != null)
+                  if (profile.datingIntent != null &&
+                      profile.datingIntent!.trim().isNotEmpty)
                     Chip(label: Text('Intent: ${profile.datingIntent}')),
-
-                  if (profile.hasKids != null)
+                  if (profile.hasKids != null &&
+                      profile.hasKids!.trim().isNotEmpty)
                     Chip(label: Text('Kids: ${profile.hasKids}')),
-
-                  if (profile.religion != null)
+                  if (profile.religion != null &&
+                      profile.religion!.trim().isNotEmpty)
                     Chip(label: Text('Religion: ${profile.religion}')),
-
-                  if (profile.education != null)
+                  if (profile.education != null &&
+                      profile.education!.trim().isNotEmpty)
                     Chip(label: Text('Education: ${profile.education}')),
                 ],
               ),
