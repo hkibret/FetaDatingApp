@@ -60,7 +60,7 @@ class ProfileRepo {
         .toList();
   }
 
-  /// Upload avatar bytes to Supabase Storage and return the public URL.
+  /// Upload main avatar bytes to Supabase Storage and return the public URL.
   /// Requires a bucket named `avatars`.
   Future<String> uploadAvatarBytes(
     Uint8List bytes, {
@@ -81,8 +81,66 @@ class ProfileRepo {
           fileOptions: FileOptions(upsert: true, contentType: contentType),
         );
 
-    final publicUrl = _client.storage.from('avatars').getPublicUrl(path);
-    return publicUrl;
+    return _client.storage.from('avatars').getPublicUrl(path);
+  }
+
+  /// Upload one extra gallery photo and return the public URL.
+  Future<String> uploadGalleryPhotoBytes(
+    Uint8List bytes, {
+    required String ext,
+    required String contentType,
+  }) async {
+    final user = _client.auth.currentUser;
+    if (user == null) throw Exception('Not authenticated');
+
+    final safeExt = ext.replaceAll('.', '').toLowerCase();
+    final fileName = '${DateTime.now().millisecondsSinceEpoch}.$safeExt';
+    final path = '${user.id}/photos/$fileName';
+
+    await _client.storage
+        .from('avatars')
+        .uploadBinary(
+          path,
+          bytes,
+          fileOptions: FileOptions(upsert: false, contentType: contentType),
+        );
+
+    return _client.storage.from('avatars').getPublicUrl(path);
+  }
+
+  /// Save the full gallery list onto the profile row.
+  Future<void> updatePhotoGallery(List<String> photos) async {
+    final user = _client.auth.currentUser;
+    if (user == null) throw Exception('Not authenticated');
+
+    await _client
+        .from('profiles')
+        .update({
+          'photos': photos,
+          'updated_at': DateTime.now().toIso8601String(),
+        })
+        .eq('id', user.id);
+  }
+
+  /// Add a single photo URL to the gallery.
+  Future<void> addPhotoToGallery(String photoUrl) async {
+    final profile = await fetchMyProfile();
+    if (profile == null) throw Exception('Profile not found');
+
+    final photos = [...profile.photos];
+    photos.add(photoUrl);
+
+    await updatePhotoGallery(photos);
+  }
+
+  /// Remove a single photo URL from the gallery.
+  Future<void> removePhotoFromGallery(String photoUrl) async {
+    final profile = await fetchMyProfile();
+    if (profile == null) throw Exception('Profile not found');
+
+    final photos = [...profile.photos]..remove(photoUrl);
+
+    await updatePhotoGallery(photos);
   }
 
   /// Upsert profile fields into `profiles` table.
@@ -145,6 +203,20 @@ class ProfileRepo {
         .from('profiles')
         .update({
           'avatar_url': null,
+          'updated_at': DateTime.now().toIso8601String(),
+        })
+        .eq('id', user.id);
+  }
+
+  /// Clear all gallery photos for the current user
+  Future<void> clearGallery() async {
+    final user = _client.auth.currentUser;
+    if (user == null) throw Exception('Not authenticated');
+
+    await _client
+        .from('profiles')
+        .update({
+          'photos': <String>[],
           'updated_at': DateTime.now().toIso8601String(),
         })
         .eq('id', user.id);

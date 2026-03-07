@@ -1,6 +1,5 @@
 import 'dart:typed_data';
 
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
@@ -21,24 +20,12 @@ class _EditProfilePageState extends ConsumerState<EditProfilePage> {
   final _bio = TextEditingController();
   final _location = TextEditingController();
 
-  Uint8List? _pickedBytes;
-  String? _pickedExt;
-  String? _pickedContentType;
+  List<String> _existingPhotos = [];
+  final List<Uint8List> _newPhotos = [];
+  final List<String> _newExt = [];
+  final List<String> _newContentType = [];
 
   bool _saving = false;
-
-  String? _prefilledForUserId;
-
-  String? _gender;
-  String? _interestedIn;
-  String? _bodyType;
-  String? _smoking;
-  String? _drinking;
-  String? _datingIntent;
-  String? _hasKids;
-  String? _religion;
-  String? _education;
-  int? _heightCm;
 
   @override
   void dispose() {
@@ -55,80 +42,87 @@ class _EditProfilePageState extends ConsumerState<EditProfilePage> {
     _bio.text = p.bio ?? '';
     _location.text = p.location ?? '';
 
-    _gender = p.gender;
-    _interestedIn = p.interestedIn;
-    _bodyType = p.bodyType;
-    _heightCm = p.heightCm;
-    _smoking = p.smoking;
-    _drinking = p.drinking;
-    _datingIntent = p.datingIntent;
-    _hasKids = p.hasKids;
-    _religion = p.religion;
-    _education = p.education;
+    _existingPhotos = [...p.photos];
   }
 
-  Future<void> _pickImage() async {
+  Future<void> _pickPhotos() async {
     final picker = ImagePicker();
-    final x = await picker.pickImage(
-      source: ImageSource.gallery,
-      imageQuality: 85,
-    );
-    if (x == null) return;
 
-    final bytes = await x.readAsBytes();
+    final files = await picker.pickMultiImage(imageQuality: 85);
 
-    final parts = x.name.split('.');
-    final ext = (parts.length > 1) ? parts.last.toLowerCase() : 'jpg';
+    if (files.isEmpty) return;
 
-    String contentType = 'image/jpeg';
-    if (ext == 'png') contentType = 'image/png';
-    if (ext == 'webp') contentType = 'image/webp';
+    if ((_existingPhotos.length + _newPhotos.length + files.length) > 6) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text("Maximum 6 photos allowed")));
+      return;
+    }
 
-    if (!mounted) return;
+    for (final f in files) {
+      final bytes = await f.readAsBytes();
+
+      final parts = f.name.split('.');
+      final ext = parts.length > 1 ? parts.last : 'jpg';
+
+      String type = 'image/jpeg';
+      if (ext == 'png') type = 'image/png';
+      if (ext == 'webp') type = 'image/webp';
+
+      _newPhotos.add(bytes);
+      _newExt.add(ext);
+      _newContentType.add(type);
+    }
+
+    setState(() {});
+  }
+
+  void _deleteExistingPhoto(int index) {
     setState(() {
-      _pickedBytes = bytes;
-      _pickedExt = ext;
-      _pickedContentType = contentType;
+      _existingPhotos.removeAt(index);
+    });
+  }
+
+  void _deleteNewPhoto(int index) {
+    setState(() {
+      _newPhotos.removeAt(index);
+      _newExt.removeAt(index);
+      _newContentType.removeAt(index);
     });
   }
 
   Future<void> _save(Profile current) async {
-    FocusScope.of(context).unfocus();
-
     setState(() => _saving = true);
+
     try {
       final repo = ref.read(profileRepoProvider);
 
-      String? avatarUrl = current.avatarUrl;
+      final uploadedUrls = [..._existingPhotos];
 
-      if (_pickedBytes != null) {
-        avatarUrl = await repo.uploadAvatarBytes(
-          _pickedBytes!,
-          ext: _pickedExt ?? 'jpg',
-          contentType: _pickedContentType ?? 'image/jpeg',
+      for (int i = 0; i < _newPhotos.length; i++) {
+        final url = await repo.uploadGalleryPhotoBytes(
+          _newPhotos[i],
+          ext: _newExt[i],
+          contentType: _newContentType[i],
         );
+
+        uploadedUrls.add(url);
       }
 
-      final parsedAge = int.tryParse(_age.text.trim());
-      final parsedHeight = _heightCm;
+      String? avatarUrl;
+
+      if (uploadedUrls.isNotEmpty) {
+        avatarUrl = uploadedUrls.first;
+      }
 
       await repo.upsertProfile(
-        name: _name.text.trim().isEmpty ? null : _name.text.trim(),
-        age: parsedAge,
-        bio: _bio.text.trim().isEmpty ? null : _bio.text.trim(),
-        location: _location.text.trim().isEmpty ? null : _location.text.trim(),
+        name: _name.text,
+        age: int.tryParse(_age.text),
+        bio: _bio.text,
+        location: _location.text,
         avatarUrl: avatarUrl,
-        gender: _gender,
-        interestedIn: _interestedIn,
+        photos: uploadedUrls,
         onboardingCompleted: true,
-        bodyType: _bodyType,
-        heightCm: parsedHeight,
-        smoking: _smoking,
-        drinking: _drinking,
-        datingIntent: _datingIntent,
-        hasKids: _hasKids,
-        religion: _religion,
-        education: _education,
       );
 
       ref.invalidate(myProfileProvider);
@@ -136,13 +130,12 @@ class _EditProfilePageState extends ConsumerState<EditProfilePage> {
       if (!mounted) return;
       Navigator.pop(context);
     } catch (e) {
-      if (!mounted) return;
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text('Save failed: $e')));
-    } finally {
-      if (mounted) setState(() => _saving = false);
+      ).showSnackBar(SnackBar(content: Text("Save failed: $e")));
     }
+
+    setState(() => _saving = false);
   }
 
   @override
@@ -150,311 +143,172 @@ class _EditProfilePageState extends ConsumerState<EditProfilePage> {
     final profileAsync = ref.watch(myProfileProvider);
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Edit Profile'),
-        actions: [
-          TextButton(
-            onPressed: _saving
-                ? null
-                : () async {
-                    final p = profileAsync.maybeWhen(
-                      data: (p) => p,
-                      orElse: () => null,
-                    );
-                    if (p == null) return;
-                    await _save(p);
-                  },
-            child: Text(_saving ? 'Saving…' : 'Save'),
-          ),
-        ],
-      ),
+      appBar: AppBar(title: const Text("Edit Profile")),
+
       body: profileAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, st) => Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Could not load your profile.',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-              ),
-              const SizedBox(height: 8),
-              Text('$e', style: const TextStyle(color: Colors.red)),
-              const SizedBox(height: 12),
-              ElevatedButton(
-                onPressed: () => ref.invalidate(myProfileProvider),
-                child: const Text('Retry'),
-              ),
-            ],
-          ),
-        ),
+
+        error: (e, _) => Center(child: Text("Error: $e")),
+
         data: (p) {
           if (p == null) {
-            return Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Text('No profile found.'),
-                  const SizedBox(height: 12),
-                  ElevatedButton(
-                    onPressed: () => ref.invalidate(myProfileProvider),
-                    child: const Text('Reload'),
-                  ),
-                ],
-              ),
-            );
+            return const Center(child: Text("Profile not found"));
           }
 
-          final currentId = p.id;
-          if (_prefilledForUserId != currentId) {
-            _prefilledForUserId = currentId;
+          if (_existingPhotos.isEmpty) {
             _prefill(p);
           }
 
-          Widget avatar;
-          if (_pickedBytes != null) {
-            avatar = CircleAvatar(
-              radius: 44,
-              backgroundImage: MemoryImage(_pickedBytes!),
-            );
-          } else if (p.avatarUrl != null && p.avatarUrl!.isNotEmpty) {
-            final url = kIsWeb
-                ? '${p.avatarUrl!}?t=${DateTime.now().millisecondsSinceEpoch}'
-                : p.avatarUrl!;
-            avatar = CircleAvatar(
-              radius: 44,
-              backgroundColor: Theme.of(context).colorScheme.surfaceVariant,
-              child: ClipOval(
-                child: Image.network(
-                  url,
-                  width: 88,
-                  height: 88,
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) =>
-                      const Icon(Icons.person, size: 44),
-                ),
-              ),
-            );
-          } else {
-            avatar = const CircleAvatar(
-              radius: 44,
-              child: Icon(Icons.person, size: 44),
-            );
-          }
+          final totalPhotos = [
+            ..._existingPhotos,
+            ..._newPhotos.map((e) => "memory"),
+          ];
 
           return ListView(
             padding: const EdgeInsets.all(16),
+
             children: [
-              Center(
-                child: Column(
-                  children: [
-                    avatar,
-                    TextButton.icon(
-                      onPressed: _saving ? null : _pickImage,
-                      icon: const Icon(Icons.photo),
-                      label: const Text('Choose photo'),
-                    ),
-                  ],
+              const Text(
+                "Photos",
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+
+              const SizedBox(height: 12),
+
+              SizedBox(
+                height: 120,
+                child: ReorderableListView.builder(
+                  scrollDirection: Axis.horizontal,
+
+                  itemCount: totalPhotos.length,
+
+                  onReorder: (oldIndex, newIndex) {
+                    if (newIndex > oldIndex) newIndex--;
+
+                    final item = totalPhotos.removeAt(oldIndex);
+                    totalPhotos.insert(newIndex, item);
+
+                    setState(() {
+                      _existingPhotos = totalPhotos
+                          .whereType<String>()
+                          .toList();
+                    });
+                  },
+
+                  itemBuilder: (context, index) {
+                    final isExisting = index < _existingPhotos.length;
+
+                    return Container(
+                      key: ValueKey(index),
+                      margin: const EdgeInsets.only(right: 10),
+                      width: 100,
+                      child: Stack(
+                        children: [
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(10),
+
+                            child: isExisting
+                                ? Image.network(
+                                    _existingPhotos[index],
+                                    fit: BoxFit.cover,
+                                    width: 100,
+                                    height: 120,
+                                  )
+                                : Image.memory(
+                                    _newPhotos[index - _existingPhotos.length],
+                                    fit: BoxFit.cover,
+                                    width: 100,
+                                    height: 120,
+                                  ),
+                          ),
+
+                          Positioned(
+                            right: 0,
+                            top: 0,
+                            child: GestureDetector(
+                              onTap: () {
+                                if (isExisting) {
+                                  _deleteExistingPhoto(index);
+                                } else {
+                                  _deleteNewPhoto(
+                                    index - _existingPhotos.length,
+                                  );
+                                }
+                              },
+
+                              child: Container(
+                                decoration: const BoxDecoration(
+                                  color: Colors.black54,
+                                  shape: BoxShape.circle,
+                                ),
+                                child: const Icon(
+                                  Icons.close,
+                                  color: Colors.white,
+                                  size: 18,
+                                ),
+                              ),
+                            ),
+                          ),
+
+                          if (index == 0)
+                            const Positioned(
+                              bottom: 5,
+                              left: 5,
+                              child: Chip(label: Text("Main")),
+                            ),
+                        ],
+                      ),
+                    );
+                  },
                 ),
               ),
-              const SizedBox(height: 16),
+
+              const SizedBox(height: 10),
+
+              ElevatedButton.icon(
+                icon: const Icon(Icons.add_photo_alternate),
+                label: const Text("Add Photos"),
+                onPressed: _pickPhotos,
+              ),
+
+              const SizedBox(height: 30),
+
               TextField(
                 controller: _name,
-                decoration: const InputDecoration(labelText: 'Name'),
+                decoration: const InputDecoration(labelText: "Name"),
               ),
+
               const SizedBox(height: 12),
+
               TextField(
                 controller: _age,
                 keyboardType: TextInputType.number,
-                decoration: const InputDecoration(labelText: 'Age'),
+                decoration: const InputDecoration(labelText: "Age"),
               ),
+
               const SizedBox(height: 12),
+
               TextField(
                 controller: _location,
-                decoration: const InputDecoration(labelText: 'Location'),
+                decoration: const InputDecoration(labelText: "Location"),
               ),
+
               const SizedBox(height: 12),
-              DropdownButtonFormField<String>(
-                value: _gender,
-                decoration: const InputDecoration(labelText: 'Gender'),
-                items: const [
-                  DropdownMenuItem(value: 'male', child: Text('Male')),
-                  DropdownMenuItem(value: 'female', child: Text('Female')),
-                ],
-                onChanged: _saving ? null : (v) => setState(() => _gender = v),
-              ),
-              const SizedBox(height: 12),
-              DropdownButtonFormField<String>(
-                value: _interestedIn,
-                decoration: const InputDecoration(labelText: 'Interested In'),
-                items: const [
-                  DropdownMenuItem(value: 'male', child: Text('Men')),
-                  DropdownMenuItem(value: 'female', child: Text('Women')),
-                  DropdownMenuItem(value: 'everyone', child: Text('Everyone')),
-                ],
-                onChanged: _saving
-                    ? null
-                    : (v) => setState(() => _interestedIn = v),
-              ),
-              const SizedBox(height: 12),
-              DropdownButtonFormField<String>(
-                value: _bodyType,
-                decoration: const InputDecoration(labelText: 'Body Type'),
-                items: const [
-                  DropdownMenuItem(value: 'slim', child: Text('Slim')),
-                  DropdownMenuItem(value: 'average', child: Text('Average')),
-                  DropdownMenuItem(value: 'athletic', child: Text('Athletic')),
-                  DropdownMenuItem(value: 'curvy', child: Text('Curvy')),
-                  DropdownMenuItem(value: 'plus', child: Text('Plus')),
-                ],
-                onChanged: _saving
-                    ? null
-                    : (v) => setState(() => _bodyType = v),
-              ),
-              const SizedBox(height: 12),
-              DropdownButtonFormField<int>(
-                value: _heightCm,
-                decoration: const InputDecoration(labelText: 'Height (cm)'),
-                items: List.generate(
-                  71,
-                  (i) => DropdownMenuItem(
-                    value: 140 + i,
-                    child: Text('${140 + i} cm'),
-                  ),
-                ),
-                onChanged: _saving
-                    ? null
-                    : (v) => setState(() => _heightCm = v),
-              ),
-              const SizedBox(height: 12),
-              DropdownButtonFormField<String>(
-                value: _smoking,
-                decoration: const InputDecoration(labelText: 'Smoking'),
-                items: const [
-                  DropdownMenuItem(value: 'no', child: Text('No')),
-                  DropdownMenuItem(
-                    value: 'sometimes',
-                    child: Text('Sometimes'),
-                  ),
-                  DropdownMenuItem(value: 'yes', child: Text('Yes')),
-                ],
-                onChanged: _saving ? null : (v) => setState(() => _smoking = v),
-              ),
-              const SizedBox(height: 12),
-              DropdownButtonFormField<String>(
-                value: _drinking,
-                decoration: const InputDecoration(labelText: 'Drinking'),
-                items: const [
-                  DropdownMenuItem(value: 'no', child: Text('No')),
-                  DropdownMenuItem(
-                    value: 'sometimes',
-                    child: Text('Sometimes'),
-                  ),
-                  DropdownMenuItem(value: 'yes', child: Text('Yes')),
-                ],
-                onChanged: _saving
-                    ? null
-                    : (v) => setState(() => _drinking = v),
-              ),
-              const SizedBox(height: 12),
-              DropdownButtonFormField<String>(
-                value: _datingIntent,
-                decoration: const InputDecoration(labelText: 'Dating Intent'),
-                items: const [
-                  DropdownMenuItem(
-                    value: 'serious',
-                    child: Text('Serious relationship'),
-                  ),
-                  DropdownMenuItem(
-                    value: 'casual',
-                    child: Text('Casual dating'),
-                  ),
-                  DropdownMenuItem(value: 'marriage', child: Text('Marriage')),
-                  DropdownMenuItem(
-                    value: 'friendship',
-                    child: Text('Friendship first'),
-                  ),
-                ],
-                onChanged: _saving
-                    ? null
-                    : (v) => setState(() => _datingIntent = v),
-              ),
-              const SizedBox(height: 12),
-              DropdownButtonFormField<String>(
-                value: _hasKids,
-                decoration: const InputDecoration(labelText: 'Has Kids'),
-                items: const [
-                  DropdownMenuItem(value: 'no', child: Text('No')),
-                  DropdownMenuItem(value: 'yes', child: Text('Yes')),
-                  DropdownMenuItem(
-                    value: 'want_kids',
-                    child: Text('Want kids someday'),
-                  ),
-                  DropdownMenuItem(value: 'open', child: Text('Open to kids')),
-                ],
-                onChanged: _saving ? null : (v) => setState(() => _hasKids = v),
-              ),
-              const SizedBox(height: 12),
-              DropdownButtonFormField<String>(
-                value: _religion,
-                decoration: const InputDecoration(labelText: 'Religion'),
-                items: const [
-                  DropdownMenuItem(
-                    value: 'christian',
-                    child: Text('Christian'),
-                  ),
-                  DropdownMenuItem(value: 'muslim', child: Text('Muslim')),
-                  DropdownMenuItem(value: 'jewish', child: Text('Jewish')),
-                  DropdownMenuItem(value: 'hindu', child: Text('Hindu')),
-                  DropdownMenuItem(value: 'none', child: Text('None')),
-                  DropdownMenuItem(value: 'other', child: Text('Other')),
-                ],
-                onChanged: _saving
-                    ? null
-                    : (v) => setState(() => _religion = v),
-              ),
-              const SizedBox(height: 12),
-              DropdownButtonFormField<String>(
-                value: _education,
-                decoration: const InputDecoration(labelText: 'Education'),
-                items: const [
-                  DropdownMenuItem(
-                    value: 'high_school',
-                    child: Text('High school'),
-                  ),
-                  DropdownMenuItem(value: 'college', child: Text('College')),
-                  DropdownMenuItem(
-                    value: 'bachelors',
-                    child: Text('Bachelors'),
-                  ),
-                  DropdownMenuItem(value: 'masters', child: Text('Masters')),
-                  DropdownMenuItem(
-                    value: 'doctorate',
-                    child: Text('Doctorate'),
-                  ),
-                  DropdownMenuItem(value: 'other', child: Text('Other')),
-                ],
-                onChanged: _saving
-                    ? null
-                    : (v) => setState(() => _education = v),
-              ),
-              const SizedBox(height: 12),
+
               TextField(
                 controller: _bio,
                 maxLines: 4,
-                decoration: const InputDecoration(labelText: 'Bio'),
+                decoration: const InputDecoration(labelText: "Bio"),
               ),
-              const SizedBox(height: 20),
+
+              const SizedBox(height: 30),
+
               ElevatedButton(
                 onPressed: _saving ? null : () => _save(p),
+
                 child: _saving
-                    ? const SizedBox(
-                        height: 18,
-                        width: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Text('Save'),
+                    ? const CircularProgressIndicator()
+                    : const Text("Save Profile"),
               ),
             ],
           );
